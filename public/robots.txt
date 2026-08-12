@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+
+# Nothing useful to index behind these, and they're per-session.
+Disallow: /cart
+Disallow: /checkout
+Disallow: /account
+Disallow: /wishlist
+Disallow: /order-success/
+
+Sitemap: https://denimque.com/sitemap.xml
