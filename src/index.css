@@ -1,0 +1,105 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    /* Lenis drives scroll; never use native smooth scroll at the same time */
+    scrollbar-color: theme('colors.stone') theme('colors.obsidian');
+  }
+
+  body {
+    @apply bg-obsidian text-pearl font-sans antialiased;
+    overflow-x: hidden;
+  }
+
+  /* Editorial numerals in display type */
+  .font-display {
+    font-variant-numeric: lining-nums;
+  }
+
+  ::selection {
+    @apply bg-denim text-obsidian;
+  }
+
+  /* Visible, non-ugly focus for keyboard users only */
+  :focus-visible {
+    outline: 1px solid theme('colors.denim');
+    outline-offset: 3px;
+  }
+
+  img {
+    /* Prevents CLS while lazy images resolve */
+    background-color: theme('colors.charcoal');
+  }
+}
+
+@layer components {
+  /* Film-grain overlay — cheap, GPU-composited, pointer-transparent */
+  .grain {
+    pointer-events: none;
+    opacity: 0.16;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+  }
+
+  .vignette {
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.72) 100%);
+  }
+
+  .text-meta {
+    @apply text-[0.6875rem] tracking-[0.18em];
+  }
+
+  /* Thin editorial rule used between sections */
+  .rule {
+    @apply h-px w-full bg-stone/40;
+  }
+
+  .link-underline {
+    background-image: linear-gradient(currentColor, currentColor);
+    background-position: 0 100%;
+    background-repeat: no-repeat;
+    background-size: 0 1px;
+    transition: background-size 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .link-underline:hover {
+    background-size: 100% 1px;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+}
+
+/* Honour the user's motion preference: kill transforms, keep content readable */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .grain {
+    display: none;
+  }
+}
