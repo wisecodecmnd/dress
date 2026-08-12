@@ -1,0 +1,168 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>REGENT — The Obsidian Polo</title>
+<meta name="description" content="The Obsidian Polo by REGENT. Tailored from shadow. A heritage black-on-black polo in raised Italian piqué." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- ░░ LOADER ░░ -->
+  <div id="loader" aria-hidden="true">
+    <div class="loader__inner">
+      <div class="loader__mark">R</div>
+      <div class="loader__name">REGENT</div>
+      <div class="loader__bar"><span id="loaderFill"></span></div>
+      <div class="loader__pct"><span id="loaderPct">0</span><i>%</i></div>
+      <div class="loader__cap">Preparing the reveal</div>
+    </div>
+  </div>
+
+  <!-- ░░ TOP BAR ░░ -->
+  <header class="topbar" id="topbar">
+    <a class="topbar__brand" href="#">REGENT</a>
+    <nav class="topbar__nav">
+      <a href="#sequence">The Film</a>
+      <a href="#outro">The Polo</a>
+      <a href="#reserve" class="topbar__cta">Reserve</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ░░ SCROLL-DRIVEN FILM ░░ -->
+    <section id="sequence">
+      <div class="sticky">
+        <canvas id="frames"></canvas>
+        <div class="layer vignette"></div>
+        <div class="layer grain"></div>
+
+        <!-- parallax text chapters -->
+        <div class="overlay">
+
+          <!-- 00 — HERO -->
+          <article class="panel panel--hero" data-start="0.00" data-end="0.085" data-align="center">
+            <span class="panel__kicker" data-depth="20">Est. 1908 · Regent</span>
+            <h1 class="panel__title display" data-depth="0">The Obsidian Polo</h1>
+            <span class="panel__sub" data-depth="-26">Tailored from shadow</span>
+            <div class="scrollcue" data-depth="-40">
+              <span>Scroll to reveal</span>
+              <i></i>
+            </div>
+          </article>
+
+          <!-- 01 — SILHOUETTE -->
+          <article class="panel" data-start="0.115" data-end="0.255" data-align="left">
+            <span class="panel__index display" data-depth="56">01</span>
+            <span class="panel__kicker" data-depth="30">The Silhouette</span>
+            <h2 class="panel__title display" data-depth="0">Born of<br>darkness</h2>
+            <p class="panel__body" data-depth="-26">A single pour of midnight cotton. The Obsidian emerges fully formed — no seam declared, no logo shouted. Presence, long before pattern.</p>
+          </article>
+
+          <!-- 02 — ARCHITECTURE -->
+          <article class="panel" data-start="0.305" data-end="0.455" data-align="right">
+            <span class="panel__index display" data-depth="56">02</span>
+            <span class="panel__kicker" data-depth="30">The Architecture</span>
+            <h2 class="panel__title display" data-depth="0">Deconstructed<br>by design</h2>
+            <p class="panel__body" data-depth="-26">Forty-one panels of long-staple piqué, engineered to fall true on the body. We took it apart so that you will never have to wonder how it holds together.</p>
+          </article>
+
+          <!-- 03 — THE HAND -->
+          <article class="panel" data-start="0.500" data-end="0.640" data-align="left">
+            <span class="panel__index display" data-depth="56">03</span>
+            <span class="panel__kicker" data-depth="30">The Hand</span>
+            <h2 class="panel__title display" data-depth="0">Twin-tipped,<br>tonal</h2>
+            <p class="panel__body" data-depth="-26">A structured three-button placket. A collar tipped in a single whisper of silver. Mother-of-pearl buttons, hand-set — every edge finished in matte black thread.</p>
+          </article>
+
+          <!-- 04 — THE WEAVE -->
+          <article class="panel" data-start="0.665" data-end="0.795" data-align="right">
+            <span class="panel__index display" data-depth="56">04</span>
+            <span class="panel__kicker" data-depth="30">The Weave</span>
+            <h2 class="panel__title display" data-depth="0">Read it<br>by touch</h2>
+            <p class="panel__body" data-depth="-26">Raised piqué, woven from a 240-gram Italian yarn. Matte where the world expects shine. The detail is felt in the hand before it is ever seen by the eye.</p>
+          </article>
+
+          <!-- 05 — THE MARK -->
+          <article class="panel panel--bottom" data-start="0.825" data-end="0.965" data-align="center">
+            <span class="panel__index display" data-depth="56">05</span>
+            <span class="panel__kicker" data-depth="30">The Mark</span>
+            <h2 class="panel__title display" data-depth="0">The Crown Crest</h2>
+            <p class="panel__body" data-depth="-26">Embossed, never printed. Black upon black. A century of making, pressed quietly into the chest — a signature you find only when you look closely.</p>
+          </article>
+
+        </div>
+
+        <!-- HUD -->
+        <div class="hud">
+          <span class="hud__label hud__label--l">REGENT · THE OBSIDIAN POLO</span>
+          <span class="hud__label hud__label--r"><b id="hudChapter">00</b> / 05</span>
+          <div class="hud__progress"><span id="hudFill"></span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ░░ OUTRO / PRODUCT ░░ -->
+    <section id="outro">
+      <div class="outro__intro reveal">
+        <span class="eyebrow">The Collection · No. 01</span>
+        <h2 class="outro__head display">Some things are made<br>to disappear into the dark.<br><em>This one was made to own it.</em></h2>
+      </div>
+
+      <div class="gallery">
+        <figure class="gallery__item reveal" data-span="wide">
+          <img src="Images/5.webp" alt="The Obsidian Polo collar detail" loading="lazy" />
+          <figcaption>The tipped collar · close</figcaption>
+        </figure>
+        <figure class="gallery__item reveal">
+          <img src="Images/4.webp" alt="Embossed crest on the chest" loading="lazy" />
+          <figcaption>The embossed chest crest</figcaption>
+        </figure>
+        <figure class="gallery__item reveal">
+          <img src="Images/1.webp" alt="The Obsidian Polo in smoke" loading="lazy" />
+          <figcaption>Studio · 0908</figcaption>
+        </figure>
+      </div>
+
+      <div class="reserve reveal" id="reserve">
+        <span class="reserve__price">£ 285</span>
+        <div class="reserve__body">
+          <h3 class="display">Reserve the Obsidian</h3>
+          <p>Each edition is numbered and released in a single drop. Reserve yours before the dark sells out.</p>
+          <div class="reserve__sizes" id="sizes">
+            <button type="button" class="size">XS</button>
+            <button type="button" class="size">S</button>
+            <button type="button" class="size is-active">M</button>
+            <button type="button" class="size">L</button>
+            <button type="button" class="size">XL</button>
+            <button type="button" class="size">XXL</button>
+          </div>
+          <button type="button" class="btn-reserve" id="btnReserve">Reserve · Edition No. <span id="editionNo">214</span></button>
+        </div>
+      </div>
+
+      <footer class="foot">
+        <div class="foot__brand display">REGENT</div>
+        <div class="foot__cols">
+          <div><span>Maison</span><a href="#">Heritage</a><a href="#">The Atelier</a><a href="#">Editions</a></div>
+          <div><span>Care</span><a href="#">Shipping</a><a href="#">Returns</a><a href="#">Contact</a></div>
+          <div><span>Follow</span><a href="#">Instagram</a><a href="#">Journal</a><a href="#">Newsletter</a></div>
+        </div>
+        <div class="foot__base">
+          <span>© 1908–2026 Regent. Tailored from shadow.</span>
+          <span>London · Biella · Kyoto</span>
+        </div>
+      </footer>
+    </section>
+  </main>
+
+  <script src="lib/gsap.min.js"></script>
+  <script src="lib/ScrollTrigger.min.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
