@@ -26,11 +26,22 @@ export default function Navbar() {
   const overHero = pathname === '/' && !scrolled;
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 40);
+    const onScroll = () => {
+      // The home hero is a pinned scene several viewports tall. Solidifying the
+      // bar 40px in would drop an opaque slab over the middle of it, so there
+      // we stay transparent until the hero has actually released the scroll.
+      const hero = document.getElementById('hero');
+      const threshold = hero ? hero.offsetHeight - window.innerHeight : 40;
+      setScrolled(window.scrollY > threshold);
+    };
     onScroll();
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
-  }, []);
+    window.addEventListener('resize', onScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+    };
+  }, [pathname]);
 
   return (
     <>
