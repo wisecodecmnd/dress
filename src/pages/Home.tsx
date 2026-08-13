@@ -8,6 +8,7 @@ import ProductCard from '../components/products/ProductCard';
 import Reveal from '../components/ui/Reveal';
 import { api } from '../services/api';
 import { media } from '../assets/media';
+import { heroMedia } from '../data/hero';
 import type { Product } from '../types';
 
 export default function Home() {
@@ -35,7 +36,7 @@ export default function Home() {
         />
         <link rel="canonical" href="https://denimque.com/" />
         <meta property="og:title" content="DENIMQUE — Denim, Redefined." />
-        <meta property="og:image" content={media.heroPoster} />
+        <meta property="og:image" content={heroMedia.poster} />
       </Helmet>
 
       <HeroSection />

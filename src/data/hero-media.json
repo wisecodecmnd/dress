@@ -1,0 +1,32 @@
+{
+  "_generated": "npm run hero:media — do not edit by hand",
+  "duration": 5.9,
+  "subject": {
+    "complete": {
+      "width": 0.26,
+      "height": 0.88,
+      "offsetX": 0.078
+    },
+    "exploded": {
+      "width": 0.349,
+      "height": 0.98,
+      "offsetX": 0.034
+    }
+  },
+  "video": {
+    "desktop": {
+      "src": "/assets/videos/denimque-hero-dress.mp4",
+      "aspect": 1.77778
+    },
+    "mobile": {
+      "src": "/assets/videos/denimque-hero-dress-mobile.mp4",
+      "aspect": 1.77632
+    }
+  },
+  "poster": "/assets/images/denimque-hero-dress-poster.webp",
+  "frames": {
+    "count": 90,
+    "pattern": "/assets/frames/frame-{i}.webp",
+    "width": 720
+  }
+}

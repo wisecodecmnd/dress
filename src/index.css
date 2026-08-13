@@ -56,6 +56,84 @@
     background: radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.72) 100%);
   }
 
+  /* Hero spotlight. Tighter and much harder than .vignette: the point is that
+     the garment is the only lit object in the room, so everything outside the
+     centre column is crushed to the page background rather than merely dimmed.
+     Three layers, in the order they solve problems:
+
+     1. an ellipse for the falloff itself;
+     2. a horizontal seal — the video frame is far wider than the viewport and
+        carries nothing but smoke at the sides, so it can be crushed hard;
+     3. a shallow vertical seal. Only ~5%, because the garment reaches to
+        within 5% of the frame's top and bottom edges; any deeper and the
+        spotlight would eat the collar and the hem. */
+  .hero-spotlight {
+    /* The clear zone has to track how much of the viewport the garment spans,
+       which changes enormously with width: ~20% on a desktop, ~74% on a phone.
+       Fixed stops would light the dress on desktop and shade the skirt on
+       mobile, so the stops are variables and the breakpoints below move them. */
+    --spot-w: 62%;
+    --spot-h: 58%;
+    --clear-from: 34%;
+    --clear-to: 66%;
+    --falloff-from: 18%;
+    --falloff-to: 82%;
+
+    background:
+      radial-gradient(
+        var(--spot-w) var(--spot-h) at 50% 47%,
+        transparent 0%,
+        rgba(10, 10, 11, 0.2) 58%,
+        rgba(10, 10, 11, 0.72) 84%,
+        theme('colors.obsidian') 100%
+      ),
+      linear-gradient(
+        to right,
+        theme('colors.obsidian') 0%,
+        rgba(10, 10, 11, 0.55) var(--falloff-from),
+        transparent var(--clear-from),
+        transparent var(--clear-to),
+        rgba(10, 10, 11, 0.55) var(--falloff-to),
+        theme('colors.obsidian') 100%
+      ),
+      linear-gradient(
+        to bottom,
+        theme('colors.obsidian') 0%,
+        transparent 5%,
+        transparent 95%,
+        theme('colors.obsidian') 100%
+      );
+  }
+
+  @media (max-width: 1023px) {
+    .hero-spotlight {
+      --spot-w: 84%;
+      --spot-h: 68%;
+      --clear-from: 22%;
+      --clear-to: 78%;
+      --falloff-from: 11%;
+      --falloff-to: 89%;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .hero-spotlight {
+      --spot-w: 96%;
+      --spot-h: 76%;
+      --clear-from: 8%;
+      --clear-to: 92%;
+      --falloff-from: 2%;
+      --falloff-to: 98%;
+    }
+  }
+
+  /* Crushes the render's ambient smoke toward the page black while leaving the
+     lit garment alone, so "only the dress is lit" is true of the pixels and not
+     just of the overlay. Both filters are GPU-composited. */
+  .hero-visual {
+    filter: contrast(1.16) brightness(0.92);
+  }
+
   .text-meta {
     @apply text-[0.6875rem] tracking-[0.18em];
   }
