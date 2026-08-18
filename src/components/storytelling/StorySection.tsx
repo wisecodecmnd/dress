@@ -10,6 +10,7 @@ const chapters = [
   {
     index: '01',
     kicker: 'The Fit',
+    frame: chapterFrames['The Fit'],
     title: 'Sculpted\nby wear',
     body: 'Every pair is patterned from 47 body measurements. We engineer the fade lines before the first wash, so your denim ages with intention, not accident.',
     align: 'left',
@@ -17,6 +18,7 @@ const chapters = [
   {
     index: '02',
     kicker: 'The Fabric',
+    frame: chapterFrames['The Fabric'],
     title: 'Woven\nin Japan',
     body: '14oz selvedge from Kojima, shuttle-woven on vintage Toyoda looms. The irregular weave creates a surface that catches light like water.',
     align: 'right',
@@ -24,6 +26,7 @@ const chapters = [
   {
     index: '03',
     kicker: 'The Craft',
+    frame: chapterFrames['The Craft'],
     title: 'One\nartisan',
     body: 'Each garment is cut, sewn, and finished by a single maker. Their signature is stitched inside — a promise that one person stood behind every seam.',
     align: 'left',
@@ -31,6 +34,7 @@ const chapters = [
   {
     index: '04',
     kicker: 'The Details',
+    frame: chapterFrames['The Details'],
     title: 'Hidden\nintentions',
     body: 'Copper rivets at stress points. Chain-stitched hems. Hidden pocket reinforcements. Details you discover over years, not seconds.',
     align: 'right',
@@ -38,6 +42,7 @@ const chapters = [
   {
     index: '05',
     kicker: 'The Signature',
+    frame: chapterFrames['The Signature'],
     title: 'The Denimque\nCrest',
     body: 'Embossed leather patch, hand-stamped with the edition number. A mark of belonging for those who know what quality feels like.',
     align: 'center',
@@ -134,12 +139,14 @@ export default function StorySection() {
       className="relative h-[100svh] overflow-hidden bg-obsidian"
       aria-label="The making of DENIMQUE, in five chapters"
     >
-      {/* Backdrop stack — one frame per chapter, crossfaded by the timeline */}
-      {chapterFrames.map((src) => (
+      {/* Backdrop stack — one frame per chapter, crossfaded by the timeline.
+          Driven off `chapters` (not a parallel array) so frame N and panel N
+          are guaranteed to describe the same chapter in both directions. */}
+      {chapters.map((chapter) => (
         <div
-          key={src}
+          key={chapter.index}
           className="story-frame absolute inset-0 bg-cover bg-center opacity-100 will-change-transform"
-          style={{ backgroundImage: `url(${src})` }}
+          style={{ backgroundImage: `url(${chapter.frame})` }}
           aria-hidden="true"
         />
       ))}
