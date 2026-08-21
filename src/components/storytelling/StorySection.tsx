@@ -146,7 +146,7 @@ export default function StorySection() {
         <div
           key={chapter.index}
           className="story-frame absolute inset-0 bg-cover bg-center opacity-100 will-change-transform"
-          style={{ backgroundImage: `url(${chapter.frame})` }}
+          style={{ backgroundImage: `url("${chapter.frame}")` }}
           aria-hidden="true"
         />
       ))}
