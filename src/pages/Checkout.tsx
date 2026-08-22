@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { CreditCard, Lock } from 'lucide-react';
+import { Lock } from 'lucide-react';
 import { api } from '../services/api';
+import { handOffToProvider } from '../services/paymentHandoff';
 import { useCartStore } from '../store/cartStore';
 import { useUIStore } from '../store/uiStore';
 import { formatPrice, orderTotals } from '../utils/format';
 import { media } from '../assets/media';
+import type { PaymentMethod, PaymentProviderId } from '../types';
 
 interface CheckoutForm {
   email: string;
@@ -53,6 +55,33 @@ export default function Checkout() {
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
 
+  // Payment methods come from the API, which only lists providers it is
+  // actually configured for. The storefront never decides what is available.
+  const [methods, setMethods] = useState<PaymentMethod[] | null>(null);
+  const [mode, setMode] = useState<'test' | 'live'>('live');
+  const [chosen, setChosen] = useState<PaymentProviderId | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    api
+      .getPaymentMethods()
+      .then((res) => {
+        if (cancelled) return;
+        setMethods(res.methods);
+        setMode(res.mode);
+        setChosen(res.methods[0]?.id ?? null);
+      })
+      // An empty list is the honest answer to "we couldn't ask": the submit
+      // button then explains payment is unavailable rather than taking an order
+      // we cannot charge for.
+      .catch(() => !cancelled && setMethods([]));
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const { shipping, tax, total } = orderTotals(subtotal);
 
   const input = (key: keyof CheckoutForm, placeholder: string, type = 'text') => (
@@ -85,6 +114,11 @@ export default function Checkout() {
       return;
     }
 
+    if (!chosen) {
+      showToast('Payment is unavailable right now — please try again shortly', 'error');
+      return;
+    }
+
     setSubmitting(true);
     try {
       // 1. Create the order server-side. Prices are recalculated from the DB
@@ -104,21 +138,62 @@ export default function Checkout() {
         items: items.map((i) => ({ productId: i.productId, size: i.size, quantity: i.quantity })),
       });
 
-      // 2. Ask the API to open a payment intent with whichever provider is
-      //    configured. Nothing is marked paid here — the provider's webhook or
-      //    the /payments/confirm callback does that.
-      const intent = await api.createPaymentIntent(order.id);
+      // 2. Ask the API to open a charge with the chosen provider. The amount is
+      //    recomputed server-side from the order; nothing here is trusted.
+      const intent = await api.createPaymentIntent(order.id, chosen);
 
+      // The basket has become an order, so it is safe to clear regardless of
+      // how the payment goes — the order page is now the source of truth.
       clearCart();
 
-      if (intent.provider === 'manual') {
+      // 3. Hand off to the gateway. A redirect leaves the page; an in-page SDK
+      //    returns evidence for the server to verify.
+      const handoff = await handOffToProvider(intent, {
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+      });
+
+      if (handoff.kind === 'redirecting') return;
+
+      if (handoff.kind === 'failed') {
+        showToast(handoff.message, 'error');
         navigate(`/order-success/${order.id}`);
-      } else {
-        // Razorpay/Stripe hand-off lives here; their SDK redirects and the
-        // provider calls back into /api/payments/confirm.
-        showToast(`Redirecting to ${intent.provider}…`, 'info');
-        navigate(`/order-success/${order.id}`);
+        return;
       }
+
+      if (handoff.kind === 'cancelled') {
+        showToast('Payment cancelled — your order is reserved but unpaid', 'info');
+        navigate(`/order-success/${order.id}`);
+        return;
+      }
+
+      if (handoff.kind === 'submitted') {
+        // 4. Only the server may conclude that this succeeded.
+        try {
+          const result = await api.confirmPayment({
+            orderId: order.id,
+            payload: handoff.payload,
+          });
+          if (result.outcome === 'confirmed' || result.payment.status === 'CAPTURED') {
+            showToast('Payment confirmed', 'success');
+          } else if (result.outcome === 'amount-mismatch') {
+            showToast('That payment did not match the order total — nothing was captured', 'error');
+          } else {
+            showToast('Payment received — awaiting confirmation', 'info');
+          }
+        } catch (verifyError) {
+          // The gateway may still settle it by webhook, so this is not a
+          // failure of the order — just of our immediate confirmation.
+          showToast(
+            verifyError instanceof Error
+              ? verifyError.message
+              : 'We could not confirm the payment yet',
+            'error',
+          );
+        }
+      }
+
+      navigate(`/order-success/${order.id}`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Checkout failed', 'error');
     } finally {
@@ -181,24 +256,67 @@ export default function Checkout() {
 
               <fieldset>
                 <legend className="mb-4 text-meta uppercase text-fog">Payment</legend>
-                <div className="flex items-center gap-3 border border-stone/50 p-4">
-                  <CreditCard size={19} className="text-fog" />
-                  <span className="text-sm text-mist">
-                    The API selects the configured provider (Razorpay, Stripe, or manual).
-                  </span>
-                </div>
+
+                {methods === null && (
+                  <p className="border border-stone/50 p-4 text-sm text-fog">
+                    Checking available payment methods…
+                  </p>
+                )}
+
+                {methods?.length === 0 && (
+                  <p className="border border-red-500/50 p-4 text-sm text-red-400">
+                    Online payment is unavailable right now. Nothing has been charged — please try
+                    again shortly or contact the atelier.
+                  </p>
+                )}
+
+                {methods && methods.length > 0 && (
+                  <div className="space-y-2">
+                    {methods.map((method) => (
+                      <label
+                        key={method.id}
+                        className={`flex cursor-pointer items-center gap-3 border p-4 transition-colors ${
+                          chosen === method.id
+                            ? 'border-pearl bg-pearl/5'
+                            : 'border-stone/50 hover:border-stone'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="paymentProvider"
+                          value={method.id}
+                          checked={chosen === method.id}
+                          onChange={() => setChosen(method.id)}
+                          className="accent-pearl"
+                        />
+                        <span className="text-sm text-mist">{method.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
                 <p className="mt-2 flex items-center gap-2 text-xs text-fog">
-                  <Lock size={12} /> Payment is captured by the provider. Orders stay unpaid until
-                  their callback confirms the charge.
+                  <Lock size={12} /> Payment is captured by the provider. Your order stays unpaid
+                  until the provider's own confirmation reaches our server.
                 </p>
+
+                {mode === 'test' && methods && methods.length > 0 && (
+                  <p className="mt-2 text-xs uppercase tracking-[0.18em] text-amber-400">
+                    Test mode — no real money will move
+                  </p>
+                )}
               </fieldset>
 
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={submitting || !chosen}
                 className="w-full bg-pearl py-4 text-sm uppercase tracking-[0.18em] text-obsidian transition-colors hover:bg-white disabled:opacity-50"
               >
-                {submitting ? 'Processing…' : `Place Order · ${formatPrice(total)}`}
+                {submitting
+                  ? 'Processing…'
+                  : methods?.length === 0
+                    ? 'Payment unavailable'
+                    : `Place Order · ${formatPrice(total)}`}
               </button>
             </form>
 

@@ -5,16 +5,14 @@ import { api } from '../services/api';
 import ProductCard from '../components/products/ProductCard';
 import QuickView from '../components/products/QuickView';
 import { useUIStore } from '../store/uiStore';
-import type { Product } from '../types';
+import type { Category, Product } from '../types';
 
-const categories = [
-  { label: 'All', slug: '' },
-  { label: 'Jeans', slug: 'jeans' },
-  { label: 'Jackets', slug: 'jackets' },
-  { label: 'Shirts', slug: 'shirts' },
-  { label: 'Overshirts', slug: 'overshirts' },
-  { label: 'Limited Editions', slug: 'limited-editions' },
-];
+/**
+ * Shown until the live category list arrives, so the filter bar never flashes
+ * empty. The real list comes from the API — whatever an admin has created and
+ * left visible.
+ */
+const FALLBACK_CATEGORIES: { label: string; slug: string }[] = [{ label: 'All', slug: '' }];
 
 const sorts = [
   { value: 'newest', label: 'Newest' },
@@ -41,6 +39,7 @@ export default function Shop() {
   const { category } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [quickView, setQuickView] = useState<Product | null>(null);
@@ -48,6 +47,29 @@ export default function Shop() {
 
   const sort = searchParams.get('sort') ?? 'newest';
   const active = category ?? '';
+
+  // Category navigation is admin-managed: a category created in admin appears
+  // here, and a disabled one disappears, with no code change.
+  useEffect(() => {
+    let cancelled = false;
+
+    api
+      .getCategories()
+      .then((res) => {
+        if (cancelled) return;
+        setCategories([
+          { label: 'All', slug: '' },
+          ...res.categories.map((c: Category) => ({ label: c.name, slug: c.slug })),
+        ]);
+      })
+      .catch(() => {
+        // Keep the fallback; the product grid is what matters on this page.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

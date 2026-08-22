@@ -14,6 +14,9 @@ server/dist/
 # Prisma generated client
 server/node_modules/.prisma/
 
+# Local development Postgres cluster (server/scripts/dev-db.mjs)
+server/.pgdata/
+
 # Master video renders — only the optimized output in public/assets/ is committed.
 # Regenerate those with `npm run hero:media`.
 assets/source/

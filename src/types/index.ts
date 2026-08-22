@@ -81,7 +81,50 @@ export type OrderStatus =
   | 'CANCELLED'
   | 'REFUNDED';
 
-export type PaymentStatus = 'PENDING' | 'AUTHORIZED' | 'CAPTURED' | 'FAILED' | 'REFUNDED';
+export type PaymentStatus =
+  | 'PENDING'
+  | 'AUTHORIZED'
+  | 'CAPTURED'
+  | 'FAILED'
+  | 'REFUNDED'
+  | 'PARTIALLY_REFUNDED';
+
+export type PaymentProviderId = 'manual' | 'razorpay' | 'phonepe' | 'stripe';
+
+/**
+ * A provider the API says it can actually take money with. `config` carries
+ * publishable values only (Razorpay key id, Stripe publishable key) — the API
+ * never sends a secret, salt or webhook secret to the browser.
+ */
+export interface PaymentMethod {
+  id: PaymentProviderId;
+  label: string;
+  config: Record<string, string>;
+}
+
+export interface PaymentMethods {
+  mode: 'test' | 'live';
+  methods: PaymentMethod[];
+}
+
+/** How the browser reaches the gateway after a charge is opened. */
+export interface PaymentIntent {
+  provider: PaymentProviderId;
+  mode: 'test' | 'live';
+  orderId: string;
+  reference: string;
+  amount: string;
+  currency: string;
+  handoff: 'none' | 'redirect' | 'sdk';
+  redirectUrl?: string;
+  sdk?: Record<string, string | number>;
+}
+
+export interface PaymentConfirmation {
+  order: Order;
+  payment: { status: PaymentStatus };
+  outcome: 'confirmed' | 'already-recorded' | 'amount-mismatch' | 'not-permitted' | 'pending';
+}
 
 export interface OrderItem {
   id: string;

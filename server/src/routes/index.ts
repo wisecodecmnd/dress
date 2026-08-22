@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { validate } from '../middleware/validate.js';
 import { optionalAuth, requireAuth } from '../middleware/auth.js';
 import { authLimiter, writeLimiter } from '../middleware/rateLimit.js';
+import { prisma } from '../config/prisma.js';
 
 import * as products from '../controllers/productController.js';
 import * as auth from '../controllers/authController.js';
@@ -12,10 +13,24 @@ import * as payments from '../controllers/paymentController.js';
 import * as users from '../controllers/userController.js';
 import * as contact from '../controllers/contactController.js';
 import * as customization from '../controllers/customizationController.js';
+import adminRoutes from './admin.js';
 
 const router = Router();
 
-router.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOString() }));
+/**
+ * Liveness/readiness probe. Reports whether the process is up and whether the
+ * database answers — and nothing else. No connection string, no version, no
+ * environment detail.
+ */
+router.get('/health', (_req, res) => {
+  void prisma
+    .$queryRaw`SELECT 1`
+    .then(() => res.json({ status: 'ok', database: 'ok' }))
+    .catch(() => res.status(503).json({ status: 'degraded', database: 'unavailable' }));
+});
+
+// ── Admin (role-gated inside) ───────────────────────────────────────────────
+router.use('/admin', adminRoutes);
 
 // ── Catalogue (public) ──────────────────────────────────────────────────────
 router.get('/products', validate(products.listQuerySchema, 'query'), products.listProducts);
@@ -58,6 +73,9 @@ router.get('/orders', requireAuth, orders.listOrders);
 router.get('/orders/:id', optionalAuth, orders.getOrder);
 
 // ── Payments ────────────────────────────────────────────────────────────────
+// Webhooks are *not* here: they are mounted in app.ts ahead of the JSON parser
+// and the origin check, because they need the raw body and cannot carry CSRF.
+router.get('/payments/methods', payments.listMethods);
 router.post(
   '/payments/intent',
   writeLimiter,
@@ -65,7 +83,14 @@ router.post(
   validate(payments.intentSchema),
   payments.createIntent,
 );
-router.post('/payments/confirm', validate(payments.confirmSchema), payments.confirmPayment);
+// Ownership is enforced inside, on the same rule as GET /orders/:id — a guest
+// order is reachable by its unguessable id, an account's order is not.
+router.post(
+  '/payments/confirm',
+  optionalAuth,
+  validate(payments.confirmSchema),
+  payments.confirmPayment,
+);
 
 // ── Contact ─────────────────────────────────────────────────────────────────
 router.post('/contact', writeLimiter, validate(contact.contactSchema), contact.submitContact);

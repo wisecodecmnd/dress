@@ -25,18 +25,43 @@ const orderByFor = (sort: string) => {
   return { createdAt: 'desc' } as const;
 };
 
+/** Only categories an admin has left visible reach the storefront. */
+const publicCategoryWhere = { isActive: true, archivedAt: null } as const;
+
 export const listProducts = asyncHandler(async (req, res) => {
   const { category, sort, featured, limited, limit, page } = req.query as unknown as z.infer<
     typeof listQuerySchema
   >;
 
-  // `limited-editions` is a virtual category backed by the isLimited flag.
-  const isLimitedCategory = category === 'limited-editions';
+  // Any slug an admin creates resolves here — there is no per-category code.
+  const real = category
+    ? await prisma.category.findFirst({
+        where: { slug: category, isActive: true, archivedAt: null },
+        select: { id: true },
+      })
+    : null;
+
+  // `limited-editions` has always been backed by the isLimited flag rather
+  // than an assignment. It stays that way, unioned with anything an admin
+  // explicitly files under the category, so neither behaviour is lost.
+  const categoryFilter = (() => {
+    if (!category) return {};
+
+    if (category === 'limited-editions') {
+      return real
+        ? { OR: [{ isLimited: true }, { categoryId: real.id }] }
+        : { isLimited: true };
+    }
+
+    // An unknown, disabled or archived slug yields nothing — never the whole
+    // catalogue.
+    return { categoryId: real?.id ?? '__no_such_category__' };
+  })();
 
   const where = {
     isActive: true,
-    ...(isLimitedCategory ? { isLimited: true } : {}),
-    ...(category && !isLimitedCategory ? { category: { slug: category } } : {}),
+    archivedAt: null,
+    ...categoryFilter,
     ...(featured === 'true' ? { isFeatured: true } : {}),
     ...(limited === 'true' ? { isLimited: true } : {}),
   };
@@ -57,7 +82,7 @@ export const listProducts = asyncHandler(async (req, res) => {
 
 export const getProduct = asyncHandler(async (req, res) => {
   const product = await prisma.product.findFirst({
-    where: { slug: req.params.slug, isActive: true },
+    where: { slug: req.params.slug, isActive: true, archivedAt: null },
     include: productInclude,
   });
 
@@ -66,13 +91,29 @@ export const getProduct = asyncHandler(async (req, res) => {
   res.json(serialize({ product }));
 });
 
+/**
+ * Drives the storefront's category navigation. Because the shop route is
+ * `/shop/:categorySlug`, adding a category in admin is all it takes for a new
+ * URL to work — no code change, no redeploy.
+ */
 export const listCategories = asyncHandler(async (_req, res) => {
   const categories = await prisma.category.findMany({
-    orderBy: { position: 'asc' },
-    select: { id: true, name: true, slug: true, description: true },
+    where: publicCategoryWhere,
+    orderBy: [{ position: 'asc' }, { name: 'asc' }],
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      description: true,
+      image: true,
+      isFeatured: true,
+      _count: { select: { products: { where: { isActive: true, archivedAt: null } } } },
+    },
   });
 
-  res.json({ categories });
+  res.json({
+    categories: categories.map(({ _count, ...c }) => ({ ...c, productCount: _count.products })),
+  });
 });
 
 export const searchQuerySchema = z.object({
@@ -85,6 +126,7 @@ export const searchProducts = asyncHandler(async (req, res) => {
   const products = await prisma.product.findMany({
     where: {
       isActive: true,
+      archivedAt: null,
       OR: [
         { name: { contains: q, mode: 'insensitive' } },
         { description: { contains: q, mode: 'insensitive' } },

@@ -1,36 +1,72 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { Check, Clock } from 'lucide-react';
+import { AlertTriangle, Check, Clock } from 'lucide-react';
 import { api } from '../services/api';
 import { formatDate, formatPrice } from '../utils/format';
 import { media } from '../assets/media';
-import type { Order } from '../types';
+import type { Order, PaymentStatus } from '../types';
+
+/**
+ * The customer's view of "did my payment work?".
+ *
+ * It reads the *payment* status, never the order status — an order can legally
+ * be CONFIRMED while its payment is still pending, and showing "Thank you" for
+ * that would be a lie. Success is only claimed for a payment the server has
+ * verified as CAPTURED.
+ *
+ * When a gateway redirects the browser back here, the page asks the API to
+ * verify the return leg. That call performs a server-side status read against
+ * the provider; the URL the customer arrives on is not evidence of anything.
+ */
+const SETTLED: PaymentStatus[] = ['CAPTURED', 'PARTIALLY_REFUNDED', 'REFUNDED'];
 
 export default function OrderSuccess() {
   const { id } = useParams();
+  const [params] = useSearchParams();
   const [order, setOrder] = useState<Order | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [verifying, setVerifying] = useState(false);
+
+  const cancelled = params.get('cancelled') === '1';
 
   useEffect(() => {
     if (!id) return;
-    let cancelled = false;
+    let dropped = false;
 
-    api
-      .getOrder(id)
-      .then((res) => {
-        if (cancelled) return;
-        setOrder(res.order);
+    async function load() {
+      try {
+        const { order: loaded } = await api.getOrder(id!);
+        if (dropped) return;
+        setOrder(loaded);
         setState('ready');
-      })
-      .catch(() => !cancelled && setState('error'));
+
+        // Not settled yet: ask the server to check with the provider. A
+        // cancelled return leg is still worth checking — the customer may have
+        // paid and then hit back.
+        const status = loaded.payment?.status;
+        if (status && !SETTLED.includes(status) && loaded.payment?.provider !== 'manual') {
+          setVerifying(true);
+          const result = await api.confirmPayment({ orderId: id! }).catch(() => null);
+          if (dropped) return;
+          setVerifying(false);
+          if (result) setOrder(result.order);
+        }
+      } catch {
+        if (!dropped) setState('error');
+      }
+    }
+
+    void load();
 
     return () => {
-      cancelled = true;
+      dropped = true;
     };
   }, [id]);
 
-  const paid = order?.status !== 'PENDING';
+  const paymentStatus = order?.payment?.status;
+  const paid = paymentStatus ? SETTLED.includes(paymentStatus) : false;
+  const failed = paymentStatus === 'FAILED';
 
   return (
     <>
@@ -65,21 +101,38 @@ export default function OrderSuccess() {
               <div className="mb-12 text-center">
                 <div
                   className={`mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border ${
-                    paid ? 'border-denim text-denim' : 'border-stone text-fog'
+                    paid
+                      ? 'border-denim text-denim'
+                      : failed
+                        ? 'border-red-500/70 text-red-400'
+                        : 'border-stone text-fog'
                   }`}
                 >
-                  {paid ? <Check size={26} /> : <Clock size={24} />}
+                  {paid ? <Check size={26} /> : failed ? <AlertTriangle size={24} /> : <Clock size={24} />}
                 </div>
 
                 <h1 className="mb-4 font-display text-display-md">
-                  {paid ? 'Thank you.' : 'Order received.'}
+                  {paid ? 'Thank you.' : failed ? "That payment didn't go through." : 'Order received.'}
                 </h1>
 
                 <p className="text-body-lg text-mist">
                   {paid
-                    ? `Order #${order.number} is confirmed. A receipt is on its way to ${order.email}.`
-                    : `Order #${order.number} is reserved and awaiting payment confirmation. We'll email ${order.email} the moment it clears.`}
+                    ? `Order #${order.number} is paid. A receipt is on its way to ${order.email}.`
+                    : failed
+                      ? `Order #${order.number} is reserved but unpaid — nothing was charged. You can settle it from your account, or the atelier can send a new payment link.`
+                      : verifying
+                        ? `Checking with the payment provider…`
+                        : cancelled
+                          ? `Order #${order.number} is reserved but the payment was cancelled. Nothing was charged.`
+                          : `Order #${order.number} is reserved and awaiting payment confirmation. We'll email ${order.email} the moment it clears.`}
                 </p>
+
+                {order.payment?.status === 'AUTHORIZED' && (
+                  <p className="mt-3 text-sm text-fog">
+                    Your bank has authorised the payment; we're waiting for the provider to confirm
+                    the capture.
+                  </p>
+                )}
               </div>
 
               <div className="border border-stone/30">
@@ -95,6 +148,12 @@ export default function OrderSuccess() {
                   <div>
                     <span className="mb-1 block text-meta uppercase text-fog">Status</span>
                     <span className="capitalize">{order.status.toLowerCase()}</span>
+                  </div>
+                  <div>
+                    <span className="mb-1 block text-meta uppercase text-fog">Payment</span>
+                    <span className="capitalize">
+                      {(order.payment?.status ?? 'PENDING').toLowerCase().replace(/_/g, ' ')}
+                    </span>
                   </div>
                 </div>
 
