@@ -5,6 +5,10 @@ import type {
   CustomizationGroup,
   CustomizationSelection,
   Order,
+  PaymentConfirmation,
+  PaymentIntent,
+  PaymentMethods,
+  PaymentProviderId,
   Product,
   User,
   WishlistItem,
@@ -95,14 +99,24 @@ export const api = {
   getOrders: () => request<{ orders: Order[] }>('/orders'),
   getOrder: (id: string) => request<{ order: Order }>(`/orders/${id}`),
 
-  // ── Payments (provider-agnostic; see server/src/services/payment) ────────
-  createPaymentIntent: (orderId: string) =>
-    request<{ provider: string; clientSecret?: string; orderId: string; amount: number }>(
-      '/payments/intent',
-      { method: 'POST', body: JSON.stringify({ orderId }) },
-    ),
-  confirmPayment: (body: { orderId: string; reference: string }) =>
-    request<{ order: Order }>('/payments/confirm', {
+  // ── Payments (provider-agnostic; see server/src/services/payments) ───────
+  /** Only providers the API is actually configured for. Publishable keys only. */
+  getPaymentMethods: () => request<PaymentMethods>('/payments/methods'),
+
+  /** Opens a charge. Nothing is paid at this point. */
+  createPaymentIntent: (orderId: string, provider?: PaymentProviderId) =>
+    request<PaymentIntent>('/payments/intent', {
+      method: 'POST',
+      body: JSON.stringify({ orderId, provider }),
+    }),
+
+  /**
+   * Asks the API to verify the return leg. `payload` is whatever the gateway
+   * handed the browser — the server treats it as evidence to check against the
+   * provider, never as a statement that the payment succeeded.
+   */
+  confirmPayment: (body: { orderId: string; payload?: unknown }) =>
+    request<PaymentConfirmation>('/payments/confirm', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

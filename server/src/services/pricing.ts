@@ -35,12 +35,15 @@ export function computeTotals(lines: LinePrice[]) {
   return { subtotal, shipping, tax, total };
 }
 
-/** Human-readable, sortable, and unguessable enough for a URL. */
-export function orderNumber(): string {
+/**
+ * Human-readable, sortable, and unguessable enough for a URL. The prefix is
+ * configurable in admin settings; it defaults to the original `DQ`.
+ */
+export function orderNumber(prefix = 'DQ'): string {
   const stamp = new Date().toISOString().slice(2, 10).replace(/-/g, '');
   const rand = Math.floor(Math.random() * 46_656)
     .toString(36)
     .toUpperCase()
     .padStart(3, '0');
-  return `DQ${stamp}${rand}`;
+  return `${prefix}${stamp}${rand}`;
 }

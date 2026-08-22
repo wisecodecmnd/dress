@@ -37,24 +37,32 @@ export const useCartStore = create<CartState>()(
       addItem: (productId, size, quantity, product) => {
         const items = [...get().items];
         const existing = items.find((i) => i.productId === productId && i.size === size);
+        // Provisional id for guests and for the moment before the server
+        // answers; replaced below with the real CartItem id once it does.
+        const localId = `${productId}:${size}`;
 
         if (existing) {
           existing.quantity += quantity;
         } else {
-          items.push({
-            id: `${productId}:${size}`,
-            productId,
-            product,
-            size,
-            quantity,
-          });
+          items.push({ id: localId, productId, product, size, quantity });
         }
 
         set({ items, ...totals(items) });
 
         if (useAuthStore.getState().isAuthenticated) {
-          // Mirror to the server cart; local state stays authoritative for UX.
-          void api.addToCart({ productId, size, quantity }).catch(() => {});
+          // Mirror to the server cart, then adopt the row id it assigned.
+          // Without this, later PATCH/DELETE calls address `productId:size`,
+          // which the API doesn't know — so the server cart (and the admin's
+          // view of it) would silently stop tracking the customer's changes.
+          void api
+            .addToCart({ productId, size, quantity })
+            .then(({ item }) => {
+              const current = get().items.map((i) =>
+                i.productId === productId && i.size === size ? { ...i, id: item.id } : i,
+              );
+              set({ items: current, ...totals(current) });
+            })
+            .catch(() => {});
         }
       },
 
@@ -64,7 +72,10 @@ export const useCartStore = create<CartState>()(
         set({ items, ...totals(items) });
 
         if (useAuthStore.getState().isAuthenticated) {
-          void api.updateCartItem(itemId, quantity).catch(() => {});
+          // A rejected write means local state has drifted from the server
+          // (e.g. an id left over from a guest session) — reconcile rather than
+          // carry on showing a quantity the server never received.
+          void api.updateCartItem(itemId, quantity).catch(() => void get().sync());
         }
       },
 
@@ -73,7 +84,7 @@ export const useCartStore = create<CartState>()(
         set({ items, ...totals(items) });
 
         if (useAuthStore.getState().isAuthenticated) {
-          void api.removeCartItem(itemId).catch(() => {});
+          void api.removeCartItem(itemId).catch(() => void get().sync());
         }
       },
 

@@ -1,5 +1,6 @@
 import { PrismaClient, Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+import { randomBytes } from 'node:crypto';
 
 const prisma = new PrismaClient();
 
@@ -11,6 +12,34 @@ const categories = [
   { name: 'Jackets', slug: 'jackets', description: 'Type III and beyond.', position: 2 },
   { name: 'Shirts', slug: 'shirts', description: 'Chambray and light denim.', position: 3 },
   { name: 'Overshirts', slug: 'overshirts', description: 'The layer between.', position: 4 },
+  {
+    name: 'Limited Editions',
+    slug: 'limited-editions',
+    description: 'Numbered runs, retired when the cloth runs out.',
+    position: 5,
+  },
+  { name: 'Saree', slug: 'saree', description: 'Handloom drape, denim weft.', position: 6 },
+  {
+    name: 'Model Dress',
+    slug: 'model-dress',
+    description: 'Runway pieces, made to measure.',
+    position: 7,
+  },
+];
+
+/**
+ * The manufacturing stage library. Durations are minutes for one unit; the
+ * admin UI shows them as hours.
+ */
+const processStages = [
+  { name: 'Design', slug: 'design', defaultDuration: 60, defaultCost: 400, description: 'Sketch, spec and sign-off.' },
+  { name: 'Pattern Making', slug: 'pattern-making', defaultDuration: 120, defaultCost: 700, description: 'Draft and grade the block.' },
+  { name: 'Fabric Preparation', slug: 'fabric-preparation', defaultDuration: 60, defaultCost: 300, description: 'Sponge, rest and inspect the cloth.' },
+  { name: 'Cutting', slug: 'cutting', defaultDuration: 120, defaultCost: 500, description: 'Lay, mark and cut.' },
+  { name: 'Stitching', slug: 'stitching', defaultDuration: 300, defaultCost: 1600, description: 'Single-needle and chain-stitch assembly.' },
+  { name: 'Finishing', slug: 'finishing', defaultDuration: 120, defaultCost: 600, description: 'Hardware, hems and press.' },
+  { name: 'Quality Check', slug: 'quality-check', defaultDuration: 60, defaultCost: 250, description: 'Measure against spec and inspect seams.' },
+  { name: 'Packaging', slug: 'packaging', defaultDuration: 30, defaultCost: 150, description: 'Tissue, box and label.' },
 ];
 
 const WAIST_SIZES = ['28', '30', '32', '34', '36'];
@@ -116,8 +145,32 @@ const products = [
   },
 ];
 
+/**
+ * In production the seed's only job is to make sure an admin account exists.
+ *
+ * The catalogue block below is idempotent by *overwriting* — prices, stock
+ * levels, images and sizes are rewritten to the values in this file. That is
+ * exactly right for a development database and destructive for a live one,
+ * where an admin has since edited all of it. Same for the demo customer, whose
+ * password is a known constant.
+ *
+ * Set SEED_CATALOGUE=true to opt in deliberately (e.g. seeding a brand-new
+ * production database before launch).
+ */
+const isProduction = process.env.NODE_ENV === 'production';
+const seedCatalogue = !isProduction || process.env.SEED_CATALOGUE === 'true';
+
 async function main() {
-  console.info('[seed] starting');
+  console.info(`[seed] starting (${isProduction ? 'production' : process.env.NODE_ENV ?? 'development'})`);
+
+  if (!seedCatalogue) {
+    console.info(
+      '[seed] production — catalogue and demo data skipped. Admin bootstrap only.\n' +
+        '       Set SEED_CATALOGUE=true to write the sample catalogue anyway.',
+    );
+    await seedAdmin();
+    return;
+  }
 
   // Categories
   for (const c of categories) {
@@ -181,7 +234,56 @@ async function main() {
     }
   }
 
-  // A demo account, so the account area can be opened immediately.
+  // ── Process stage library ────────────────────────────────────────────────
+  for (const [i, s] of processStages.entries()) {
+    const data = {
+      name: s.name,
+      description: s.description,
+      defaultDuration: s.defaultDuration,
+      defaultCost: new Prisma.Decimal(s.defaultCost),
+      sortOrder: i,
+    };
+    await prisma.processStage.upsert({
+      where: { slug: s.slug },
+      create: { slug: s.slug, ...data },
+      update: data,
+    });
+  }
+
+  const stageBySlug = new Map(
+    (await prisma.processStage.findMany({ select: { id: true, slug: true } })).map((s) => [
+      s.slug,
+      s.id,
+    ]),
+  );
+
+  // Give every seeded product the full stage list, so a first order produces a
+  // real production plan with a real deadline. Existing rows are left as-is so
+  // re-seeding never overwrites an admin's per-product overrides.
+  for (const p of products) {
+    const product = await prisma.product.findUnique({
+      where: { slug: p.slug },
+      select: { id: true },
+    });
+    if (!product) continue;
+
+    for (const [i, s] of processStages.entries()) {
+      const stageId = stageBySlug.get(s.slug);
+      if (!stageId) continue;
+
+      await prisma.productProcess.upsert({
+        where: { productId_stageId: { productId: product.id, stageId } },
+        create: { productId: product.id, stageId, sortOrder: i },
+        update: {},
+      });
+    }
+  }
+
+  await seedAdmin();
+
+  // ── Demo customer (never in production) ──────────────────────────────────
+  // A fixed, published password. Fine for local development, unacceptable on a
+  // live database — so it is only ever created outside production.
   const email = 'demo@denimque.com';
   const passwordHash = await bcrypt.hash('denimque2026', 12);
 
@@ -212,6 +314,53 @@ async function main() {
   console.info(
     `[seed] done — ${products.length} products, ${categories.length} categories, demo login ${email} / denimque2026`,
   );
+}
+
+/**
+ * Ensures exactly one admin exists. Credentials come from the environment;
+ * nothing is hardcoded and an existing admin's password is never silently
+ * reset. Safe to run against a populated production database.
+ */
+async function seedAdmin() {
+  const adminEmail = (process.env.ADMIN_EMAIL ?? 'admin@denimque.com').toLowerCase();
+  const generated = !process.env.ADMIN_PASSWORD;
+  const adminPassword =
+    process.env.ADMIN_PASSWORD ?? randomBytes(12).toString('base64url');
+
+  if (adminPassword.length < 8) {
+    throw new Error('ADMIN_PASSWORD must be at least 8 characters');
+  }
+
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: adminEmail },
+    select: { id: true },
+  });
+
+  await prisma.user.upsert({
+    where: { email: adminEmail },
+    create: {
+      email: adminEmail,
+      passwordHash: await bcrypt.hash(adminPassword, 12),
+      firstName: 'DENIMQUE',
+      lastName: 'Admin',
+      role: 'ADMIN',
+      cart: { create: {} },
+      wishlist: { create: {} },
+    },
+    // Never silently reset a password that already exists — an operator who
+    // wants a rotation sets ADMIN_PASSWORD explicitly.
+    update: process.env.ADMIN_PASSWORD
+      ? { role: 'ADMIN', passwordHash: await bcrypt.hash(adminPassword, 12) }
+      : { role: 'ADMIN' },
+  });
+
+  if (!existingAdmin && generated) {
+    console.info(
+      `\n[seed] ADMIN CREATED\n        email:    ${adminEmail}\n        password: ${adminPassword}\n        Change it after first sign-in. Set ADMIN_PASSWORD to choose your own.\n`,
+    );
+  } else if (existingAdmin && !process.env.ADMIN_PASSWORD) {
+    console.info(`[seed] admin ${adminEmail} already exists — password left unchanged`);
+  }
 }
 
 main()

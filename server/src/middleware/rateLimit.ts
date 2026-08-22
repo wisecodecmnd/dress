@@ -27,3 +27,16 @@ export const writeLimiter = rateLimit({
   limit: 30,
   ...shared,
 });
+
+/**
+ * Provider webhooks. Generous, because a gateway legitimately bursts — one
+ * order can produce several events, and a backlog is redelivered all at once.
+ * Rate-limiting a real webhook only delays a payment being recorded, so the
+ * ceiling is set to stop abuse rather than to shape traffic. Forged requests
+ * are cheap to reject: the signature check runs before any database work.
+ */
+export const webhookLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 300,
+  ...shared,
+});

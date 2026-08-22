@@ -18,8 +18,12 @@ enum Role {
 
 enum OrderStatus {
   PENDING
+  CONFIRMED
   PAID
   PROCESSING
+  IN_PRODUCTION
+  QUALITY_CHECK
+  READY
   SHIPPED
   DELIVERED
   CANCELLED
@@ -32,6 +36,39 @@ enum PaymentStatus {
   CAPTURED
   FAILED
   REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// Lifecycle of the production plan attached to one order line.
+enum ProductionStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+/// Lifecycle of a single stage within a production plan.
+enum StageStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  BLOCKED
+  SKIPPED
+}
+
+/// Canonical unit a duration is *displayed* in; storage is always minutes.
+enum DurationUnit {
+  MINUTES
+  HOURS
+  DAYS
 }
 
 model User {
@@ -42,16 +79,21 @@ model User {
   lastName      String?
   phone         String?
   role          Role            @default(CUSTOMER)
+  /// Admin can suspend an account without deleting its order history.
+  isActive      Boolean         @default(true)
+  lastLoginAt   DateTime?
   addresses     Address[]
   cart          Cart?
   wishlist      Wishlist?
   orders        Order[]
   reviews       Review[]
   customizations Customization[]
+  activityLogs  ActivityLog[]
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
   @@index([createdAt])
+  @@index([role])
 }
 
 model Address {
@@ -77,10 +119,18 @@ model Category {
   name        String
   slug        String    @unique
   description String?
+  image       String?
   position    Int       @default(0)
+  /// Hidden from the storefront when false; products keep their assignment.
+  isActive    Boolean   @default(true)
+  isFeatured  Boolean   @default(false)
+  /// Soft delete: archived categories keep referential history.
+  archivedAt  DateTime?
   products    Product[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  @@index([isActive, position])
 }
 
 model Product {
@@ -88,6 +138,10 @@ model Product {
   slug         String          @unique
   name         String
   description  String
+  /// Short line used in cards and admin lists.
+  shortDescription String?
+  /// Stock-keeping unit for the product as a whole; variants carry their own.
+  sku          String?         @unique
   story        String?
   fabric       String?
   fit          String?
@@ -100,6 +154,11 @@ model Product {
   isLimited    Boolean         @default(false)
   isFeatured   Boolean         @default(false)
   isActive     Boolean         @default(true)
+  /// Soft delete: order history references products with Restrict, so rows
+  /// are archived rather than deleted.
+  archivedAt   DateTime?
+  /// Manual display order within a category; lower sorts first.
+  position     Int             @default(0)
   editionNo    Int?
   categoryId   String?
   category     Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
@@ -112,12 +171,15 @@ model Product {
   orderItems   OrderItem[]
   reviews      Review[]
   customizations Customization[]
+  processes    ProductProcess[]
+  productionOrders ProductionOrder[]
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
   @@index([categoryId])
   @@index([isFeatured, isActive])
   @@index([price])
+  @@index([isActive, position])
 }
 
 model ProductImage {
@@ -171,6 +233,9 @@ model Cart {
   items     CartItem[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+
+  /// The admin cart board filters and sorts on last activity.
+  @@index([updatedAt])
 }
 
 model CartItem {
@@ -202,6 +267,8 @@ model WishlistItem {
   createdAt  DateTime @default(now())
 
   @@unique([wishlistId, productId])
+  /// Cascade cleanup when a product is deleted.
+  @@index([productId])
 }
 
 model Order {
@@ -214,6 +281,14 @@ model Order {
   addressId String?
   address   Address?    @relation(fields: [addressId], references: [id], onDelete: SetNull)
   status    OrderStatus @default(PENDING)
+  priority  Priority    @default(NORMAL)
+  /// Rolled up from the order's production plans when the order is placed;
+  /// admin may override.
+  requiredBy    DateTime?
+  /// Promised delivery date shown to the customer.
+  deliveryDueAt DateTime?
+  adminNotes    String?
+  cancelledAt   DateTime?
   subtotal  Decimal     @db.Decimal(10, 2)
   shipping  Decimal     @db.Decimal(10, 2)
   tax       Decimal     @db.Decimal(10, 2)
@@ -223,11 +298,33 @@ model Order {
   coupon    Coupon?     @relation(fields: [couponId], references: [id], onDelete: SetNull)
   items     OrderItem[]
   payment   Payment?
+  productionOrders ProductionOrder[]
+  events    OrderEvent[]
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
   @@index([userId, createdAt])
   @@index([status])
+  @@index([createdAt])
+  @@index([requiredBy])
+  /// Deleting an address sets this null across every order referencing it.
+  @@index([addressId])
+}
+
+/// Append-only order timeline. Every status change writes one row, so the
+/// detail page's timeline is recorded history rather than a guess derived
+/// from the current status.
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  label     String
+  detail    String?
+  /// Email of the admin who caused it; null for system/customer events.
+  actorEmail String?
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
 }
 
 model OrderItem {
@@ -243,10 +340,20 @@ model OrderItem {
   size      String
   quantity  Int
   unitPrice Decimal @db.Decimal(10, 2)
+  /// One production plan per ordered line.
+  production ProductionOrder?
 
   @@index([orderId])
+  /// Deleting or archiving a product counts its order lines, and the Restrict
+  /// foreign key is checked on every product delete.
+  @@index([productId])
 }
 
+/// One payment per order. `reference` is the merchant-side transaction id we
+/// generate and send to the gateway (Razorpay `receipt`, PhonePe
+/// `merchantOrderId`, Stripe `client_reference_id`); the two `provider*Id`
+/// columns hold what the gateway generated back. Card data is never stored —
+/// `rawPayload` keeps only the provider's own status object.
 model Payment {
   id        String        @id @default(cuid())
   orderId   String        @unique
@@ -255,12 +362,59 @@ model Payment {
   status    PaymentStatus @default(PENDING)
   amount    Decimal       @db.Decimal(10, 2)
   currency  String        @default("INR")
-  reference String?
+  /// Merchant-side transaction id, unique per attempt. Also what a redirect
+  /// return-leg and a PhonePe callback are matched on, so it has to be unique
+  /// across the table — two orders sharing one reference would make a callback
+  /// ambiguous.
+  reference String?       @unique
+  /// Gateway order/session handle: Razorpay order_id, Stripe Checkout Session
+  /// id, PhonePe merchant order handle.
+  providerOrderId   String?
+  /// Gateway payment handle: razorpay_payment_id, Stripe PaymentIntent id,
+  /// PhonePe transactionId.
+  providerPaymentId String?
+  /// `test` or `live`, captured at creation so a reconciliation never mixes them.
+  mode      String?
+  /// Provider-reported reason a charge did not succeed. Shown to admin only.
+  failureReason  String?
+  /// Cumulative amount refunded; drives PARTIALLY_REFUNDED vs REFUNDED.
+  refundedAmount Decimal  @default(0) @db.Decimal(10, 2)
+  paidAt     DateTime?
+  refundedAt DateTime?
   rawPayload Json?
+  events     PaymentEvent[]
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
   @@index([status])
+  @@index([providerOrderId])
+  /// Duplicate-payment protection: one gateway payment id can settle exactly
+  /// one order. Postgres allows many NULLs, so unattempted rows are unaffected.
+  @@unique([provider, providerPaymentId])
+}
+
+/// Idempotency ledger for provider callbacks. A row is inserted inside the same
+/// transaction that applies the outcome, so a replayed or concurrent delivery
+/// of the same event loses the unique constraint and applies nothing. Because
+/// the insert is transactional, a delivery that fails mid-flight leaves no row
+/// and the provider's retry is still able to succeed.
+model PaymentEvent {
+  id         String   @id @default(cuid())
+  provider   String
+  /// Provider's own event id where one exists, else a digest of the signed
+  /// payload — either way stable across redeliveries of the same event.
+  eventId    String
+  type       String
+  paymentId  String?
+  payment    Payment? @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  /// What applying it did: `applied`, `ignored`, `rejected`.
+  result     String
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  @@unique([provider, eventId])
+  @@index([paymentId])
+  @@index([createdAt])
 }
 
 model Coupon {
@@ -318,4 +472,151 @@ model Customization {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  /// Deleting a product sets this null across every saved customization.
+  @@index([productId])
+}
+
+// ── Manufacturing ───────────────────────────────────────────────────────────
+
+/// A reusable manufacturing step (Cutting, Stitching, …) owned by the business,
+/// not by any one product. Durations are stored in minutes so quantity maths
+/// stays in integers; `durationUnit` only controls how admin renders it.
+model ProcessStage {
+  id              String       @id @default(cuid())
+  name            String
+  slug            String       @unique
+  description     String?
+  /// Canonical duration in minutes for one unit.
+  defaultDuration Int          @default(60)
+  durationUnit    DurationUnit @default(HOURS)
+  defaultCost     Decimal      @default(0) @db.Decimal(10, 2)
+  isActive        Boolean      @default(true)
+  sortOrder       Int          @default(0)
+  archivedAt      DateTime?
+  products        ProductProcess[]
+  productionStages ProductionStage[]
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+/// A stage applied to one product, with per-product duration and cost
+/// overrides. Rows are kept individually (never rolled into a single total) so
+/// admin can see exactly where time and money go.
+model ProductProcess {
+  id          String       @id @default(cuid())
+  productId   String
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stageId     String
+  stage       ProcessStage @relation(fields: [stageId], references: [id], onDelete: Restrict)
+  sortOrder   Int          @default(0)
+  /// Null falls back to the stage default, so editing the stage updates
+  /// every product that hasn't overridden it.
+  duration    Int?
+  cost        Decimal?     @db.Decimal(10, 2)
+  isMandatory Boolean      @default(true)
+  notes       String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([productId, stageId])
+  @@index([productId, sortOrder])
+  /// Archiving a stage counts the products using it, and Restrict is checked
+  /// on every stage delete.
+  @@index([stageId])
+}
+
+/// The production plan for one ordered line. Estimates are snapshotted from the
+/// product's process configuration at order time, so later catalogue edits
+/// never rewrite a live plan's deadline.
+model ProductionOrder {
+  id          String           @id @default(cuid())
+  orderId     String
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderItemId String           @unique
+  orderItem   OrderItem        @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product          @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity    Int              @default(1)
+  status      ProductionStatus @default(NOT_STARTED)
+  /// Sum of stage estimates × quantity, in minutes.
+  estimatedMinutes    Int      @default(0)
+  estimatedCost       Decimal  @default(0) @db.Decimal(10, 2)
+  estimatedStartAt    DateTime?
+  estimatedCompletionAt DateTime?
+  /// The date the plan is held to. Seeded from the estimate; admin may move it.
+  deadlineAt          DateTime?
+  actualStartAt       DateTime?
+  actualCompletionAt  DateTime?
+  notes               String?
+  stages      ProductionStage[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([orderId])
+  @@index([status, deadlineAt])
+  @@index([deadlineAt])
+  /// Restrict foreign key, checked on every product delete.
+  @@index([productId])
+}
+
+/// One step of a live production plan. `name` is snapshotted so a renamed or
+/// archived stage never rewrites the history of work already done.
+model ProductionStage {
+  id                String        @id @default(cuid())
+  productionOrderId String
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  /// Null once the source stage is hard-deleted; `name` still stands.
+  stageId           String?
+  stage             ProcessStage? @relation(fields: [stageId], references: [id], onDelete: SetNull)
+  name              String
+  sortOrder         Int           @default(0)
+  status            StageStatus   @default(PENDING)
+  estimatedMinutes  Int           @default(0)
+  actualMinutes     Int?
+  cost              Decimal       @default(0) @db.Decimal(10, 2)
+  isMandatory       Boolean       @default(true)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  /// Free-text owner; the app has no staff table to reference.
+  assignee          String?
+  notes             String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([productionOrderId, sortOrder])
+  @@index([status])
+}
+
+// ── Operations ──────────────────────────────────────────────────────────────
+
+/// Audit trail for admin mutations and notable customer events. Feeds the
+/// admin notification/activity panel.
+model ActivityLog {
+  id         String   @id @default(cuid())
+  /// Null for system- or customer-generated events.
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail String?
+  action     String
+  entity     String
+  entityId   String?
+  summary    String
+  meta       Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
+  @@index([action])
+  /// The customer detail page reads this customer's own activity.
+  @@index([actorId])
+}
+
+/// Business settings as typed key/value rows, so a new setting needs no
+/// migration. Defaults live in server/src/services/settings.ts.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
 }

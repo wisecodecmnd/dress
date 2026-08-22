@@ -1,6 +1,9 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../../services/api';
 
-const columns = [
+// Editorial columns are authored copy, not catalogue data, so they stay here.
+const editorialColumns = [
   {
     title: 'Maison',
     links: [
@@ -19,18 +22,37 @@ const columns = [
       { label: 'Account', to: '/account' },
     ],
   },
-  {
-    title: 'Shop',
-    links: [
-      { label: 'Jeans', to: '/shop/jeans' },
-      { label: 'Jackets', to: '/shop/jackets' },
-      { label: 'Shirts', to: '/shop/shirts' },
-      { label: 'Overshirts', to: '/shop/overshirts' },
-    ],
-  },
 ];
 
+/** Fallback until the live category list loads. */
+const FALLBACK_SHOP_LINKS = [{ label: 'All pieces', to: '/shop' }];
+
 export default function Footer() {
+  const [shopLinks, setShopLinks] = useState(FALLBACK_SHOP_LINKS);
+
+  // The Shop column mirrors whatever categories admin has left visible.
+  useEffect(() => {
+    let cancelled = false;
+
+    api
+      .getCategories()
+      .then((res) => {
+        if (cancelled || res.categories.length === 0) return;
+        setShopLinks(
+          res.categories.slice(0, 6).map((c) => ({ label: c.name, to: `/shop/${c.slug}` })),
+        );
+      })
+      .catch(() => {
+        // Keep the fallback link — the footer must always render.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const columns = [...editorialColumns, { title: 'Shop', links: shopLinks }];
+
   return (
     <footer className="border-t border-stone/30 bg-obsidian px-6 pb-10 pt-20 lg:px-12">
       <div className="mx-auto max-w-[110rem]">

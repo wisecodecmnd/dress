@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../config/prisma.js';
 import { asyncHandler, HttpError } from '../utils/http.js';
 import { clearAuthCookie, setAuthCookie, signToken } from '../middleware/auth.js';
+import { logActivityAsync } from '../services/activity.js';
 
 const BCRYPT_ROUNDS = 12;
 
@@ -47,6 +48,16 @@ export const register = asyncHandler(async (req, res) => {
 
   setAuthCookie(res, signToken({ sub: user.id, email: user.email, role: user.role }));
 
+  // Surfaces the signup in the admin activity feed and dashboard immediately.
+  logActivityAsync({
+    action: 'customer.register',
+    entity: 'Customer',
+    entityId: user.id,
+    summary: `New customer ${[user.firstName, user.lastName].filter(Boolean).join(' ') || user.email} registered`,
+    actorId: user.id,
+    actorEmail: user.email,
+  });
+
   res.status(201).json({ user });
 });
 
@@ -61,6 +72,12 @@ export const login = asyncHandler(async (req, res) => {
 
   const matches = await bcrypt.compare(password, user.passwordHash);
   if (!matches) throw invalid;
+
+  // A suspended account can still fail closed without leaking that it exists
+  // to an attacker who doesn't already have the password.
+  if (!user.isActive) throw HttpError.forbidden('This account has been suspended');
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
   setAuthCookie(res, signToken({ sub: user.id, email: user.email, role: user.role }));
 

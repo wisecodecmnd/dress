@@ -20,7 +20,7 @@ page's interaction architecture follows `landing page refference.html` (preloade
 | Backend   | Node, Express, TypeScript                     |
 | Database  | PostgreSQL via Prisma                         |
 | Auth      | JWT in an httpOnly cookie                     |
-| Payments  | Provider abstraction (manual / Razorpay / Stripe) |
+| Payments  | Provider registry (manual / Razorpay / PhonePe / Stripe) |
 | Email     | Transport abstraction (log / Resend / SMTP)   |
 
 ---
@@ -48,6 +48,20 @@ Requires a PostgreSQL instance. With Docker:
 docker run --name denimque-db -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:16
 ```
 
+No Docker or Postgres installed? The API ships a development-only cluster
+(`embedded-postgres`, a devDependency) that runs a real PostgreSQL from
+downloaded binaries. Leave it running in its own terminal:
+
+```bash
+cd server
+npm run db:dev
+```
+
+It prints the `DATABASE_URL` to paste into `server/.env`, stores its data in
+`server/.pgdata`, and `npm run db:reset` starts over from an empty cluster.
+This is for local development only — in production `DATABASE_URL` points at a
+managed Postgres exactly as before, and nothing in `src/` imports it.
+
 ### 3. API
 
 ```bash
@@ -72,12 +86,36 @@ npm run seed
 npm run dev
 ```
 
-The seed creates 4 categories, 6 products (with images, sizes and stock levels
-that include deliberate sold-out sizes), a coupon, and a demo account:
+The seed creates 7 categories, 6 products (with images, sizes and stock levels
+that include deliberate sold-out sizes), the 8 manufacturing process stages,
+a full process configuration for every product, a coupon, and a demo account:
 
 ```
 demo@denimque.com / denimque2026
 ```
+
+**All of that is development-only.** With `NODE_ENV=production` the seed writes
+nothing but the admin account: the catalogue block is idempotent by
+*overwriting*, which would reset prices, stock and images an admin has since
+edited, and the demo account's password is a published constant. See
+[Deploying to production](#deploying-to-production).
+
+### 3a. Admin account
+
+The seed also creates the admin user. Credentials come from the environment —
+nothing is hardcoded, and an existing admin's password is never silently reset:
+
+```bash
+cd server
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='a-strong-password' npm run seed
+```
+
+Omit `ADMIN_PASSWORD` and a random one is generated and printed once. Sign in
+at `/admin/login`.
+
+Admin routes live under `/admin/*` and every `/api/admin/*` endpoint is gated
+server-side on a valid session **and** the `ADMIN` role — the React route guard
+is convenience only. See [Admin](#admin) below.
 
 ### 4. Sitemap
 
@@ -172,7 +210,9 @@ server/
                            users contact customization
     middleware/            auth, validate, error, rate limit
     routes/index.ts        the whole API surface in one file
-    services/              pricing, payment providers, email
+    services/              pricing, email, settings, production
+      payments/            provider registry, the four providers,
+                           state machine, money, orchestration
     utils/                 HttpError, Decimal serialisation
 ```
 
@@ -207,11 +247,96 @@ All routes are under `/api`. Money is returned as fixed-2 strings, never floats.
 | POST   | `/orders`                 | optional  |
 | GET    | `/orders`                 | required  |
 | GET    | `/orders/:id`             | optional  |
+| GET    | `/payments/methods`       | –         |
 | POST   | `/payments/intent`        | optional  |
-| POST   | `/payments/confirm`       | –         |
+| POST   | `/payments/confirm`       | optional  |
+| POST   | `/payments/webhooks/razorpay` | signature |
+| POST   | `/payments/webhooks/phonepe`  | signature |
+| POST   | `/payments/webhooks/stripe`   | signature |
 | POST   | `/contact`                | –         |
 | GET    | `/customization/options`  | –         |
 | POST   | `/customization`          | optional  |
+
+---
+
+## Admin
+
+The operational backend of the storefront, at `/admin`. Screens: dashboard,
+orders, production, live carts, customers, products, categories, process
+stages, settings.
+
+### Authentication
+
+`POST /api/admin/login` is deliberately separate from the storefront login: the
+role is checked **before** a session is issued, so a customer posting there
+never receives a cookie. Same bcrypt hashes, same httpOnly `SameSite=Lax`
+cookie, no second credential store. Everything past `/api/admin/login` runs
+`verifyOrigin → requireAuth → requireAdmin`.
+
+| Method       | Route                                          |
+| ------------ | ---------------------------------------------- |
+| POST         | `/admin/login`                                 |
+| GET/POST     | `/admin/me`, `/admin/logout`                   |
+| GET          | `/admin/dashboard`                             |
+| CRUD         | `/admin/categories`, `/admin/products`         |
+| CRUD         | `/admin/processes` (stage library)             |
+| CRUD         | `/admin/products/:id/processes` (per-product)  |
+| GET/PATCH    | `/admin/customers`, `/admin/orders`            |
+| GET          | `/admin/carts`, `/admin/carts/summary`         |
+| GET/PATCH    | `/admin/production`, `/admin/production/:id`   |
+| POST         | `/admin/production/:id/start`, `/rebuild`      |
+| PATCH        | `/admin/production/:id/stages/:stageId`        |
+| GET/PATCH    | `/admin/settings`                              |
+| GET          | `/admin/activity`, `/admin/export?type=`       |
+
+### Dynamic categories
+
+The shop route is `/shop/:categorySlug` and resolves against the database, so a
+category created in admin makes its URL work immediately with no code change.
+Disabling one removes it from navigation and its listing returns empty rather
+than falling back to the whole catalogue. `/shop/limited-editions` remains
+backed by the `isLimited` flag, unioned with anything explicitly filed under
+that category, so the original behaviour is preserved.
+
+### Production planning
+
+A product's process stages (`ProductProcess`) carry optional per-product
+duration and cost overrides; a null override inherits the stage default, so
+editing the stage library updates every product that hasn't opted out. Rows are
+stored individually — never rolled into a single total — so admin can see where
+time and cost actually sit.
+
+When an order is placed, `createProductionPlans` runs **inside the order
+transaction**: an order can never exist without the work it implies. Estimates
+are snapshotted onto the plan, so later catalogue edits never rewrite a live
+plan's deadline. Deadlines are computed from the configured working days and
+minutes-per-day in admin settings.
+
+Completing a stage records `completedAt`, derives `actualMinutes` from when it
+started, activates the next stage, and rolls the order status forward
+(`IN_PRODUCTION`, then `READY` when every stage is settled) — never backwards
+from `SHIPPED`/`DELIVERED`, and never over a cancellation.
+
+Overdue is derived, not stored: a plan past its deadline that is neither
+completed nor cancelled. Completed work is never retroactively overdue.
+
+### Cart activity
+
+`/admin/carts` reads the same persisted server cart the storefront writes to,
+so a signed-in customer's add-to-cart is visible to admin. Status is derived —
+`ACTIVE` (touched recently), `ABANDONED` (idle past the configured window),
+`CONVERTED` (emptied at checkout, customer has orders). There is no websocket
+layer in this stack, so the admin views revalidate on an interval (30s carts,
+60s dashboard and production). This is polling and is labelled as such.
+
+### Revenue
+
+Counted only from orders whose payment reached `CAPTURED` or
+`PARTIALLY_REFUNDED` — never `PENDING`, `AUTHORIZED` or `FAILED`, and never a
+fully `REFUNDED` one. It is a query over payment status, not a running total, so
+a duplicate webhook cannot inflate it. With the default `manual` provider and no
+admin having settled anything, these figures are legitimately zero rather than
+invented.
 
 ### Things worth knowing
 
@@ -222,16 +347,359 @@ name, image and unit price onto the order line — so historical orders don't
 change when the catalogue does. It all runs in one transaction.
 
 **No order is ever marked paid without provider verification.**
-`/payments/intent` opens a charge and stores the reference. `/payments/confirm`
-calls `provider.verify()` and only advances the order to `PAID` if that returns
-true. The `manual` provider's `verify()` returns `false` by design: those orders
-stay `PENDING` until settled off-platform. Razorpay and Stripe are wired into
-the same interface but their two calls throw `501` until implemented — the
-places to fill in are marked in `server/src/services/payment.ts`.
+`/payments/intent` opens a charge with the chosen provider and stores its
+handles. Nothing is settled until either the provider's signed webhook arrives
+or `/payments/confirm` re-reads the payment from the provider's own API. A
+browser saying "it worked" is never sufficient, and the amount is always
+re-derived from the order row. See [Payments](#payments-1).
 
 **Guest vs. signed-in carts.** Guests keep their cart in `localStorage`
 (Zustand `persist`). Signed-in users get the same local cart mirrored to the
-server, and `sync()` reconciles from the server on sign-in.
+server, and `sync()` reconciles from the server on sign-in. A signed-in add
+adopts the row id the API assigns, so later quantity changes address the real
+`CartItem` — that mirroring is what the admin cart board reads. `localStorage`
+is a guest-UX cache only; the server cart is the source of truth for anything
+the business acts on.
+
+**Linting is not configured.** There is no ESLint config in the repository, so
+`npm run lint` fails with "eslint not found". `npm run typecheck` and
+`npm --prefix server run typecheck` are the type-level gates that do run.
+
+---
+
+## Deploying to production
+
+### Environment
+
+Names only — never commit values. The API refuses to boot with `NODE_ENV=production`
+until the required ones are set and sane.
+
+**Frontend** (build-time, baked into the bundle — put nothing secret here):
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `VITE_API_URL` | yes, unless same-origin | Origin of the deployed API, e.g. `https://api.example.com`. Unset means `/api` on the page's own origin. |
+
+**API:**
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `NODE_ENV` | yes | `production` |
+| `PORT` | no | Defaults to 4000 |
+| `DATABASE_URL` | yes | Managed Postgres connection string |
+| `JWT_SECRET` | yes | 32+ characters; the `.env.example` placeholder is rejected |
+| `JWT_EXPIRES_IN` | no | Defaults to `7d` |
+| `CORS_ORIGIN` | yes | Comma-separated storefront origins. No default in production |
+| `COOKIE_DOMAIN` | if cross-subdomain | e.g. `.example.com` |
+| `COOKIE_SAMESITE` | no | `lax` (default), `strict`, or `none`. `none` also requires HTTPS and `COOKIE_DOMAIN` |
+| `BUSINESS_TIMEZONE` | no | IANA zone, defaults to `Asia/Kolkata` |
+| `PAYMENT_PROVIDER` | no | `auto` (default), or `manual` / `razorpay` / `phonepe` / `stripe`, or a comma list |
+| `PAYMENT_MODE` | no | `test` or `live`. Defaults to `live` in production, `test` otherwise |
+| `PAYMENT_RETURN_ORIGIN` | if API and storefront differ | Origin gateways redirect back to; also the base for webhook URLs |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | if Razorpay | All three. Secret + webhook secret never leave the server |
+| `PHONEPE_API_VERSION` | if PhonePe | `v2` (default) or `v1` |
+| `PHONEPE_BASE_URL`, `PHONEPE_AUTH_BASE_URL` | if PhonePe live | Required in live mode; sandbox defaults apply in test mode |
+| `PHONEPE_CLIENT_ID`, `PHONEPE_CLIENT_SECRET`, `PHONEPE_CLIENT_VERSION` | if PhonePe v2 | Server-side only |
+| `PHONEPE_CALLBACK_USERNAME`, `PHONEPE_CALLBACK_PASSWORD` | if PhonePe v2 | Callback authentication pair |
+| `PHONEPE_MERCHANT_ID`, `PHONEPE_SALT_KEY`, `PHONEPE_SALT_INDEX` | if PhonePe v1 | Server-side only |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | if Stripe | Server-side only |
+| `STRIPE_PUBLISHABLE_KEY` | if Stripe | Sent to the browser by design |
+| `EMAIL_PROVIDER` | no | `log` (default), `resend` or `smtp` |
+| `RESEND_API_KEY` | if Resend | |
+| `EMAIL_FROM`, `CONTACT_INBOX` | no | |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | seed only | Read by `npm run seed`, never by the running API |
+
+`ADMIN_PASSWORD` only ever sets the password of an admin that does not exist
+yet, or rotates it when explicitly provided. It is never returned by any API
+response and never logged.
+
+### Cookies
+
+The session is an httpOnly, `Secure` (in production), `SameSite=Lax` cookie on
+path `/`, expiring in 7 days. Because it is `Lax`, the API and the storefront
+must be **same-site** — `example.com` and `api.example.com` with
+`COOKIE_DOMAIN=.example.com` works. Hosting the API on an unrelated domain
+requires `COOKIE_SAMESITE=none` over HTTPS.
+
+Logout clears the cookie. Tokens are stateless, so a token already issued stays
+valid until it expires; admin authority is re-checked against the database on
+every `/api/admin/*` request, so demoting or suspending an admin takes effect on
+their next request.
+
+### Timezone
+
+Every server-side day boundary — dashboard "today", due-today/due-tomorrow
+windows, overdue evaluation, `completedToday` — is derived from
+`BUSINESS_TIMEZONE`, not from the server's clock zone or the browser's. Set it
+once and the numbers are the same wherever the container runs. Timestamps go
+over the wire as UTC ISO strings; the admin UI formats them for display.
+
+### Migrations
+
+```bash
+npm --prefix server run prisma:deploy
+```
+
+`prisma migrate deploy` applies pending migrations and never resets, drops or
+re-baselines. Do **not** run `prisma migrate dev` or `migrate reset` against
+production. The current migrations are additive (tables, then indexes); the
+index migration takes a brief lock per table as each index builds.
+
+Back the database up before migrating — `prisma migrate deploy` has no undo.
+
+### Deployment sequence
+
+```bash
+npm ci && npm --prefix server ci
+npm --prefix server run build
+npm run build
+npm --prefix server run prisma:deploy
+ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='...' npm --prefix server run seed
+npm --prefix server start
+```
+
+Serve `dist/` as static files. Point a health check at `GET /api/health`, which
+returns `{"status":"ok","database":"ok"}` and nothing else — no connection
+string, no version, no environment detail — and 503 when the database is
+unreachable.
+
+### Payments
+
+Four gateways are supported. All four go through one provider registry, so
+buying a gateway later means supplying its credentials — not editing checkout,
+orders, admin or the webhook plumbing.
+
+```
+PaymentService              server/src/services/payments/service.ts
+      ↓
+Provider registry           server/src/services/payments/registry.ts
+      ├── Manual            no credentials; reconciled off-platform
+      ├── Razorpay          REST + HMAC signature + signed webhook
+      ├── PhonePe           REST (v1 salt / v2 OAuth) + verified callback
+      └── Stripe            REST + Checkout Session + signed webhook
+```
+
+| Gateway | Implemented | Refunds | Webhook | Ready when |
+| --- | --- | --- | --- | --- |
+| Manual | yes | recorded | n/a | always |
+| Razorpay | yes | yes | yes | `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET` + `RAZORPAY_WEBHOOK_SECRET` set |
+| PhonePe | yes | yes | yes | v2: client id/secret/version + callback pair · v1: merchant id + salt key/index |
+| Stripe | yes | yes | yes | `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` set |
+
+**No gateway has been exercised against live credentials.** The signature,
+checksum, state-machine, amount and idempotency logic is covered by
+deterministic fixtures in `server/scripts/verify.mjs`; the request/response
+shapes follow each provider's documented REST API. Run one sandbox transaction
+per gateway before taking real money — see *Verifying a gateway* below.
+
+#### Choosing providers
+
+`PAYMENT_PROVIDER` decides what *may* be offered; credentials decide what
+actually is. A provider appears in checkout only when it is both.
+
+| Value | Behaviour |
+| --- | --- |
+| `auto` (default) | Every gateway whose credentials are complete is offered. Falls back to `manual` when none are. |
+| `manual` | Bank transfer / pay on delivery only. |
+| `razorpay` | Razorpay only. Missing credentials ⇒ unavailable, not a fake success. |
+| `razorpay,stripe` | Both, in that order. The first is the storefront's default selection. |
+
+`GET /api/payments/methods` returns exactly what the storefront may show —
+provider ids, labels, and publishable values only. A gateway that is selected
+but misconfigured returns `503` from `/payments/intent` with a clear message,
+and the boot log says which variable is missing. It never crashes the API and
+never produces a `PAID` order.
+
+#### 1 · Running with manual payment
+
+Nothing to configure. `PAYMENT_PROVIDER=manual` (or leaving `auto` with no
+gateway credentials) reserves the order as `PENDING` with a `PENDING` payment,
+and an admin settles it from the order detail page once the money arrives. The
+manual provider has no self-confirming path: `verifyPayment` reports `PENDING`,
+so a customer cannot advance it.
+
+#### 2 · Activating Razorpay
+
+1. Dashboard → *Account & Settings → API Keys* → generate a key pair.
+2. Dashboard → *Settings → Webhooks* → add
+   `https://<api-host>/api/payments/webhooks/razorpay`, choose a secret, and
+   subscribe to `payment.captured`, `payment.authorized`, `payment.failed` and
+   `refund.processed`.
+3. Set `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
+4. Set `PAYMENT_PROVIDER=razorpay` (or leave `auto`).
+
+The webhook secret is **not** optional: without it a callback cannot be
+authenticated, and the provider stays unavailable rather than trusting an
+unsigned one. Test keys are `rzp_test_…`, live keys `rzp_live_…`, and a key that
+disagrees with `PAYMENT_MODE` is treated as misconfigured.
+
+#### 3 · Activating PhonePe
+
+PhonePe onboards each merchant onto one API generation, and issues host names
+per merchant. Set the version your merchant pack documents — do not guess.
+
+*v2 — PG Standard Checkout (default):*
+
+```
+PHONEPE_API_VERSION=v2
+PHONEPE_CLIENT_ID=…
+PHONEPE_CLIENT_SECRET=…
+PHONEPE_CLIENT_VERSION=…
+PHONEPE_CALLBACK_USERNAME=…
+PHONEPE_CALLBACK_PASSWORD=…
+PHONEPE_BASE_URL=…          # required in live mode
+PHONEPE_AUTH_BASE_URL=…     # required in live mode
+```
+
+*v1 — legacy salt-key PG:*
+
+```
+PHONEPE_API_VERSION=v1
+PHONEPE_MERCHANT_ID=…
+PHONEPE_SALT_KEY=…
+PHONEPE_SALT_INDEX=…
+PHONEPE_BASE_URL=…          # required in live mode
+```
+
+Configure the callback URL `https://<api-host>/api/payments/webhooks/phonepe` on
+the PhonePe dashboard. For v2, the callback username/password pair is also
+configured there — PhonePe sends `SHA256("username:password")` as the
+`Authorization` header and the server compares it in constant time.
+
+In live mode `PHONEPE_BASE_URL` is required, deliberately: defaulting it would
+risk pointing production at the sandbox.
+
+#### 4 · Activating Stripe
+
+1. Dashboard → *Developers → API keys* → copy the secret and publishable keys.
+2. Dashboard → *Developers → Webhooks* → add
+   `https://<api-host>/api/payments/webhooks/stripe`, and subscribe to
+   `checkout.session.completed`, `checkout.session.expired`,
+   `checkout.session.async_payment_succeeded`,
+   `checkout.session.async_payment_failed`, `payment_intent.payment_failed`
+   and `charge.refunded`.
+3. Set `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUBLISHABLE_KEY`.
+4. Set `PAYMENT_PROVIDER=stripe` (or leave `auto`).
+
+Only the publishable key reaches the browser. Returning to `success_url` proves
+nothing: the confirmation page triggers a server-side session read, and the
+webhook is authoritative.
+
+#### Test and live mode
+
+`PAYMENT_MODE` is `live` under `NODE_ENV=production` and `test` otherwise, and
+can be set explicitly. A key whose prefix contradicts the mode (`sk_live_` in
+test, `rzp_test_` in live) makes the provider unavailable rather than being
+used, and Stripe's secret and publishable keys must be from the same mode. Use
+each gateway's sandbox credentials for `test`.
+
+#### Webhook URLs
+
+```
+https://<api-host>/api/payments/webhooks/razorpay
+https://<api-host>/api/payments/webhooks/phonepe
+https://<api-host>/api/payments/webhooks/stripe
+```
+
+These are mounted ahead of the JSON body parser and the origin allowlist,
+because signatures are computed over the exact bytes delivered and a gateway
+can send neither a CSRF token nor an allowlisted `Origin`. Authenticity comes
+from cryptography instead: every handler verifies the provider's signature
+before reading a single field. The CSRF posture of every other route is
+unchanged. `200` means verified (including "already applied"), `400` a failed
+signature, `503` a provider not configured here, `500` our fault — and a `500`
+is safe to retry, because each outcome is applied in one transaction with its
+idempotency claim.
+
+Locally, tunnel them: `stripe listen --forward-to localhost:4000/api/payments/webhooks/stripe`,
+or an ngrok URL for Razorpay/PhonePe.
+
+#### Verifying a gateway is active
+
+1. **Boot log** — the API prints
+   `[payments] mode=test available=razorpay` on start, and a line naming each
+   missing variable for any selected-but-unconfigured provider.
+2. **API** — `curl https://<api-host>/api/payments/methods` lists exactly what
+   checkout will offer.
+3. **Admin** — *Settings → Payment gateways* shows every provider's state, the
+   reason any is unavailable, and its webhook URL. It shows no secrets, and
+   there is no endpoint that writes them.
+4. **Checkout** — the payment step lists the enabled providers as radio
+   options, and labels test mode explicitly.
+5. **One sandbox transaction** — pay it, then confirm on the order that the
+   payment reached `CAPTURED`, `paidAt` is set, and *Settings → Payment
+   gateways → Recent provider events* shows the webhook as `applied`. Replay
+   the same webhook from the provider's dashboard: the second delivery must
+   record as `duplicate` and change nothing.
+
+#### Payment state machine
+
+Payment status and order status stay separate concepts.
+
+```
+PENDING     → AUTHORIZED | CAPTURED | FAILED
+AUTHORIZED  → CAPTURED | FAILED
+CAPTURED    → PARTIALLY_REFUNDED | REFUNDED
+FAILED      → PENDING            (a new attempt reopens the row)
+PARTIALLY_REFUNDED → REFUNDED
+REFUNDED    → terminal
+```
+
+`FAILED → CAPTURED` is absent by construction: a failed payment can only reach
+`CAPTURED` by going through `PENDING` again, which only `/payments/intent` does,
+and which mints a fresh merchant reference. `AUTHORIZED` is the "processing"
+state — the gateway holds the funds but has not captured.
+
+A capture advances the *order* from `PENDING`/`CONFIRMED` to `PAID` and leaves
+anything further along the fulfilment chain alone, so a late webhook cannot
+rewind a shipped order. A full refund moves the order to `REFUNDED`; a partial
+one does not, because the goods may still be owed.
+
+Admins go through the same machine. An admin can settle or fail a *manual*
+payment (audit-logged), but cannot hand-capture a gateway payment — that is the
+gateway's job, and doing it by hand would put the books out of step with the
+processor.
+
+#### Idempotency and concurrency
+
+Every provider callback claims a row in `PaymentEvent` (`@@unique([provider,
+eventId])`) inside the same transaction that applies it. A replayed or
+concurrent redelivery loses the unique constraint and applies nothing; a
+delivery that fails mid-flight leaves no row, so the provider's retry still
+works. Event ids are the provider's own where one exists (`x-razorpay-event-id`,
+Stripe's `evt_…`) and a digest of order + state + transaction for PhonePe, which
+sends none.
+
+On top of that, the status write is conditional on the status that was read, so
+two callbacks racing each other cannot both capture. `Payment.reference` and
+`(provider, providerPaymentId)` are unique, so one gateway payment can settle at
+most one order.
+
+Stock, production plans and revenue need no protection here by construction:
+stock is reserved and plans are built when the order is created, and revenue is
+a query over settled payments rather than a running total. There is no counter
+for a duplicate webhook to increment.
+
+#### What is not stored
+
+No card numbers, CVVs, banking credentials or provider secrets. `rawPayload`
+holds only the status fields the code reads back from each provider. Secrets are
+server-side environment variables and are never returned by any endpoint, in any
+role, or written to the log.
+
+Capture is already idempotent: a repeated callback returns the existing order
+rather than re-capturing, and a cancelled or refunded order cannot become `PAID`.
+
+### Verification
+
+```bash
+npm --prefix server run build
+VERIFY_ADMIN_PASSWORD='...' npm --prefix server run verify
+```
+
+Starts the compiled API against `DATABASE_URL` and runs the end-to-end chain
+plus the authorization, ownership, validation, money and concurrency checks.
+It writes real rows — point it at a development database, never production.
 
 ---
 
