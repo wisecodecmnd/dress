@@ -17,6 +17,9 @@ export default {
       fontFamily: {
         display: ['"Cormorant Garamond"', 'Georgia', 'serif'],
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // Condensed poster face for the shop's giant ghost headline. Deliberate
+        // contrast against the serif display type; used at ghost opacity only.
+        poster: ['Anton', '"Arial Narrow"', 'Impact', 'sans-serif'],
       },
       fontSize: {
         'display-xl': ['clamp(3rem, 9vw, 8.5rem)', { lineHeight: '0.92', letterSpacing: '-0.02em' }],

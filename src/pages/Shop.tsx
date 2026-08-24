@@ -1,55 +1,31 @@
-import { useEffect, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
+import { Link, NavLink, useParams, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { api } from '../services/api';
-import ProductCard from '../components/products/ProductCard';
-import QuickView from '../components/products/QuickView';
-import { useUIStore } from '../store/uiStore';
+import ShopStage from '../components/shop/ShopStage';
 import type { Category, Product } from '../types';
 
-/**
- * Shown until the live category list arrives, so the filter bar never flashes
- * empty. The real list comes from the API — whatever an admin has created and
- * left visible.
- */
-const FALLBACK_CATEGORIES: { label: string; slug: string }[] = [{ label: 'All', slug: '' }];
-
-const sorts = [
-  { value: 'newest', label: 'Newest' },
-  { value: 'price-asc', label: 'Price: Low to High' },
-  { value: 'price-desc', label: 'Price: High to Low' },
-];
-
-/**
- * Editorial asymmetric grid on desktop: every 5th and 6th card takes a taller
- * frame and spans wider, so the page never reads as a uniform Shopify grid.
- * Mobile falls back to a clean single column.
- */
-const spanFor = (i: number) => {
-  const slot = i % 6;
-  if (slot === 0) return 'lg:col-span-7';
-  if (slot === 1) return 'lg:col-span-5 lg:pt-16';
-  if (slot === 2) return 'lg:col-span-4';
-  if (slot === 3) return 'lg:col-span-4 lg:pt-20';
-  if (slot === 4) return 'lg:col-span-4';
-  return 'lg:col-span-12 lg:mx-auto lg:max-w-3xl';
-};
+/** The carousel is a ring, so it can carry the whole catalogue in one pass. */
+const PAGE_SIZE = 60;
 
 export default function Shop() {
   const { category } = useParams();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const [products, setProducts] = useState<Product[]>([]);
-  const [categories, setCategories] = useState(FALLBACK_CATEGORIES);
+  const [categories, setCategories] = useState<{ label: string; slug: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [quickView, setQuickView] = useState<Product | null>(null);
-  const showToast = useUIStore((s) => s.showToast);
+  /** Bumped by the error state's retry, which re-runs the real fetch. */
+  const [attempt, setAttempt] = useState(0);
 
   const sort = searchParams.get('sort') ?? 'newest';
   const active = category ?? '';
 
-  // Category navigation is admin-managed: a category created in admin appears
-  // here, and a disabled one disappears, with no code change.
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+
+  // Category navigation stays admin-managed: a category created in admin
+  // appears here, and a disabled one disappears, with no code change.
   useEffect(() => {
     let cancelled = false;
 
@@ -57,13 +33,10 @@ export default function Shop() {
       .getCategories()
       .then((res) => {
         if (cancelled) return;
-        setCategories([
-          { label: 'All', slug: '' },
-          ...res.categories.map((c: Category) => ({ label: c.name, slug: c.slug })),
-        ]);
+        setCategories(res.categories.map((c: Category) => ({ label: c.name, slug: c.slug })));
       })
       .catch(() => {
-        // Keep the fallback; the product grid is what matters on this page.
+        // The carousel is what matters on this page; navigation degrades quietly.
       });
 
     return () => {
@@ -71,6 +44,8 @@ export default function Shop() {
     };
   }, []);
 
+  // The single source of products: whatever the catalogue API returns, which is
+  // whatever an admin has created and left active.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -79,6 +54,7 @@ export default function Shop() {
     const params = new URLSearchParams();
     if (category) params.set('category', category);
     params.set('sort', sort);
+    params.set('limit', String(PAGE_SIZE));
 
     api
       .getProducts(params.toString())
@@ -87,9 +63,7 @@ export default function Shop() {
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        const message = err instanceof Error ? err.message : 'Could not load the collection';
-        setError(message);
-        showToast(message, 'error');
+        setError(err instanceof Error ? err.message : 'Could not load the collection');
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -98,9 +72,21 @@ export default function Shop() {
     return () => {
       cancelled = true;
     };
-  }, [category, sort, showToast]);
+  }, [category, sort, attempt]);
 
-  const heading = categories.find((c) => c.slug === active)?.label ?? 'The Collection';
+  // An admin publishing or deactivating a piece in another tab shows up as soon
+  // as the customer comes back to this one.
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') retry();
+    };
+    document.addEventListener('visibilitychange', onFocus);
+    return () => document.removeEventListener('visibilitychange', onFocus);
+  }, [retry]);
+
+  const categoryName = categories.find((c) => c.slug === active)?.label;
+  const heading = categoryName ?? 'The Collection';
+  const headline = (categoryName ?? 'New\nCollection').toUpperCase();
 
   return (
     <>
@@ -113,95 +99,144 @@ export default function Shop() {
         <link rel="canonical" href={`https://denimque.com/shop${active ? `/${active}` : ''}`} />
       </Helmet>
 
-      <div className="px-6 pb-24 pt-32 lg:px-12 lg:pt-40">
-        <div className="mx-auto max-w-[110rem]">
-          <header className="mb-14">
-            <span className="mb-4 block text-meta uppercase text-denim">Shop Denimque</span>
-            <h1 className="font-display text-display-lg">{heading}</h1>
-          </header>
+      {/* Category navigation sits above the stage as a thin editorial rail so
+          the /shop/:category routes stay reachable without a filter chrome. */}
+      {categories.length > 0 && (
+        <nav
+          className="absolute inset-x-0 top-[4.5rem] z-40 flex justify-center gap-x-6 gap-y-2 overflow-x-auto px-6 pt-3 no-scrollbar lg:top-[4.75rem] lg:px-12"
+          aria-label="Product categories"
+        >
+          <NavLink
+            to="/shop"
+            end
+            className={({ isActive }) =>
+              `whitespace-nowrap text-meta uppercase transition-colors ${
+                isActive ? 'text-pearl' : 'text-fog hover:text-pearl'
+              }`
+            }
+          >
+            All
+          </NavLink>
+          {categories.map((c) => (
+            <NavLink
+              key={c.slug}
+              to={`/shop/${c.slug}`}
+              className={({ isActive }) =>
+                `whitespace-nowrap text-meta uppercase transition-colors ${
+                  isActive ? 'text-pearl' : 'text-fog hover:text-pearl'
+                }`
+              }
+            >
+              {c.label}
+            </NavLink>
+          ))}
+        </nav>
+      )}
 
-          {/* Filters */}
-          <div className="mb-14 flex flex-col items-start justify-between gap-6 border-b border-stone/30 pb-6 lg:flex-row lg:items-center">
-            <nav className="flex flex-wrap gap-x-7 gap-y-3" aria-label="Product categories">
-              {categories.map((cat) => (
-                <Link
-                  key={cat.slug || 'all'}
-                  to={cat.slug ? `/shop/${cat.slug}` : '/shop'}
-                  aria-current={active === cat.slug ? 'page' : undefined}
-                  className={`text-meta uppercase transition-colors ${
-                    active === cat.slug
-                      ? 'border-b border-pearl pb-1 text-pearl'
-                      : 'text-fog hover:text-pearl'
-                  }`}
-                >
-                  {cat.label}
-                </Link>
-              ))}
-            </nav>
-
-            <label className="flex items-center gap-3 text-meta uppercase text-fog">
-              Sort
-              <select
-                value={sort}
-                onChange={(e) => {
-                  const next = new URLSearchParams(searchParams);
-                  next.set('sort', e.target.value);
-                  setSearchParams(next, { replace: true });
-                }}
-                className="border border-stone/50 bg-transparent px-3 py-2 text-sm normal-case tracking-normal text-pearl outline-none transition-colors focus:border-denim"
+      {loading ? (
+        <StageMessage
+          kicker="DENIMQUE"
+          headline={'LOADING\nCOLLECTION'}
+          title="Loading collection…"
+          body="Pulling the current pieces from the atelier."
+          pulse
+        />
+      ) : error ? (
+        <StageMessage
+          kicker="DENIMQUE"
+          headline={'UNABLE\nTO LOAD'}
+          title="Unable to load collection"
+          body={error}
+          action={
+            <button
+              type="button"
+              onClick={retry}
+              className="border border-pearl bg-pearl px-7 py-3.5 text-meta uppercase text-obsidian transition-colors hover:border-denim hover:bg-denim"
+            >
+              Try again
+            </button>
+          }
+        />
+      ) : products.length === 0 ? (
+        <StageMessage
+          kicker="DENIMQUE"
+          headline={'COMING\nSOON'}
+          title="Collection coming soon"
+          body={
+            active
+              ? 'No pieces are currently available in this category.'
+              : 'No products are currently available.'
+          }
+          action={
+            active ? (
+              <Link
+                to="/shop"
+                className="border border-stone/50 px-7 py-3.5 text-meta uppercase text-mist transition-colors hover:border-pearl hover:text-pearl"
               >
-                {sorts.map((s) => (
-                  <option key={s.value} value={s.value} className="bg-charcoal">
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {/* Grid */}
-          {loading ? (
-            <div className="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
-              {Array.from({ length: 6 }, (_, i) => (
-                <div key={i} className="aspect-[3/4] animate-pulse bg-charcoal" />
-              ))}
-            </div>
-          ) : error ? (
-            <div className="py-24 text-center">
-              <p className="font-display text-2xl text-mist">The collection didn't load</p>
-              <p className="mt-2 text-sm text-fog">{error}</p>
-              <button
-                onClick={() => setSearchParams(new URLSearchParams({ sort }), { replace: true })}
-                className="mt-6 border border-stone/50 px-6 py-3 text-meta uppercase text-mist hover:border-pearl hover:text-pearl"
-              >
-                Try again
-              </button>
-            </div>
-          ) : products.length === 0 ? (
-            <div className="py-24 text-center">
-              <p className="font-display text-2xl text-mist">Nothing in this category yet</p>
-              <Link to="/shop" className="mt-3 inline-block text-meta uppercase text-denim link-underline">
                 View everything
               </Link>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-12 lg:gap-x-8 lg:gap-y-20">
-              {products.map((p, i) => (
-                <div key={p.id} className={spanFor(i)}>
-                  <ProductCard
-                    product={p}
-                    index={i}
-                    onQuickView={setQuickView}
-                    aspect={i % 6 === 0 ? 'tall' : 'standard'}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+            ) : undefined
+          }
+        />
+      ) : (
+        <ShopStage products={products} headline={headline} kicker="Shop DENIMQUE" />
+      )}
+    </>
+  );
+}
+
+/**
+ * Loading, empty and error all keep the stage: same full viewport, same ghost
+ * headline, same bottom-left copy block. The page never flashes a bare grid.
+ */
+function StageMessage({
+  kicker,
+  headline,
+  title,
+  body,
+  action,
+  pulse = false,
+}: {
+  kicker: string;
+  headline: string;
+  title: string;
+  body?: string;
+  action?: ReactNode;
+  pulse?: boolean;
+}) {
+  return (
+    <section className="relative flex min-h-[100svh] w-full items-end overflow-hidden bg-obsidian">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 z-0"
+        style={{
+          background:
+            'radial-gradient(78% 62% at 50% 46%, rgba(38,55,74,0.55) 0%, rgba(10,10,11,0) 78%)',
+        }}
+      />
+      <div aria-hidden="true" className="grain absolute inset-0 z-[5]" />
+
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 px-6 pt-28 lg:px-12 lg:pt-32">
+        <span className="block text-meta uppercase text-denim">{kicker}</span>
       </div>
 
-      <QuickView product={quickView} onClose={() => setQuickView(null)} />
-    </>
+      <h1
+        aria-hidden="true"
+        className={`pointer-events-none absolute inset-x-0 top-[19%] z-10 select-none whitespace-pre-line px-4 text-center font-poster uppercase leading-[0.82] text-pearl/[0.07] md:top-[16%] ${
+          pulse ? 'animate-pulse' : ''
+        }`}
+        style={{ fontSize: 'clamp(2.75rem, 13vw, 13rem)' }}
+      >
+        {headline}
+      </h1>
+
+      <div className="relative z-30 w-full px-6 pb-14 lg:px-12 lg:pb-16">
+        <div className="mx-auto max-w-[110rem]">
+          <p className="font-display text-3xl text-pearl lg:text-[2.6rem]">{title}</p>
+          {body && <p className="mt-3 max-w-md text-sm text-mist">{body}</p>}
+          {action && <div className="mt-6">{action}</div>}
+        </div>
+      </div>
+    </section>
   );
 }
