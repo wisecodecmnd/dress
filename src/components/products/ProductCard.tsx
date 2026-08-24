@@ -100,15 +100,19 @@ export default function ProductCard({
         )}
       </Link>
 
-      {/* Hover controls — outside the Link so they aren't nested interactives */}
+      {/* Hover controls — outside the Link so they aren't nested interactives.
+          A touch device never fires mouseenter, so the reveal is gated on
+          (hover: hover); without it these would sit invisible but tappable. */}
       <div
-        className={`pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-3 pb-[7.5rem] transition-all duration-500 ease-editorial ${
-          hovered ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'
+        className={`absolute inset-x-0 bottom-0 flex justify-center gap-3 pb-[7.5rem] transition-all duration-500 ease-editorial ${
+          hovered
+            ? 'translate-y-0 opacity-100'
+            : 'translate-y-0 opacity-100 [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:translate-y-3 [@media(hover:hover)]:opacity-0'
         }`}
       >
         <button
           onClick={handleAddToCart}
-          className="pointer-events-auto flex h-10 w-10 items-center justify-center bg-pearl text-obsidian transition-colors hover:bg-denim hover:text-pearl"
+          className="flex h-11 w-11 items-center justify-center bg-pearl text-obsidian transition-colors hover:bg-denim hover:text-pearl"
           aria-label={`Add ${product.name} to cart`}
         >
           <ShoppingBag size={16} />
@@ -116,7 +120,7 @@ export default function ProductCard({
 
         <button
           onClick={handleWishlist}
-          className={`pointer-events-auto flex h-10 w-10 items-center justify-center transition-colors ${
+          className={`flex h-11 w-11 items-center justify-center transition-colors ${
             wished ? 'bg-denim text-pearl' : 'bg-pearl text-obsidian hover:bg-denim hover:text-pearl'
           }`}
           aria-label={wished ? `Remove ${product.name} from wishlist` : `Save ${product.name}`}
@@ -128,7 +132,7 @@ export default function ProductCard({
         {onQuickView && (
           <button
             onClick={() => onQuickView(product)}
-            className="pointer-events-auto flex h-10 w-10 items-center justify-center bg-pearl text-obsidian transition-colors hover:bg-denim hover:text-pearl"
+            className="flex h-11 w-11 items-center justify-center bg-pearl text-obsidian transition-colors hover:bg-denim hover:text-pearl"
             aria-label={`Quick view ${product.name}`}
           >
             <Eye size={16} />
@@ -160,7 +164,7 @@ export default function ProductCard({
                   onClick={() => !soldOut && setSize(s.size)}
                   disabled={soldOut}
                   aria-pressed={size === s.size}
-                  className={`h-8 w-8 border text-[11px] transition-colors ${
+                  className={`h-11 w-11 border text-[11px] transition-colors ${
                     size === s.size
                       ? 'border-pearl text-pearl'
                       : soldOut

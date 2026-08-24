@@ -34,9 +34,16 @@ export default function QuickView({ product, onClose }: QuickViewProps) {
 
   if (!product) return null;
 
+  const stockFor = (s: string) =>
+    product.inventory?.find((i) => i.size === s)?.quantity ?? Number.POSITIVE_INFINITY;
+
   const handleAdd = () => {
     if (!size) {
       showToast('Select a size first', 'error');
+      return;
+    }
+    if (stockFor(size) < 1) {
+      showToast(`Size ${size} is sold out`, 'error');
       return;
     }
     addItem(product.id, size, 1, product);
@@ -51,7 +58,7 @@ export default function QuickView({ product, onClose }: QuickViewProps) {
       <div className="relative grid w-full max-w-3xl animate-fade-up grid-cols-1 border border-stone/40 bg-charcoal sm:grid-cols-2">
         <button
           onClick={onClose}
-          className="absolute right-3 top-3 z-10 text-fog transition-colors hover:text-pearl"
+          className="absolute right-2 top-2 z-10 flex h-11 w-11 items-center justify-center text-fog transition-colors hover:text-pearl"
           aria-label="Close quick view"
         >
           <X size={18} />
@@ -83,15 +90,14 @@ export default function QuickView({ product, onClose }: QuickViewProps) {
               <span className="mb-2 block text-meta uppercase text-fog">Size</span>
               <div className="flex flex-wrap gap-2">
                 {product.sizes.map((s) => {
-                  const soldOut =
-                    (product.inventory?.find((i) => i.size === s.size)?.quantity ?? 1) < 1;
+                  const soldOut = stockFor(s.size) < 1;
                   return (
                     <button
                       key={s.id}
                       disabled={soldOut}
                       onClick={() => setSize(s.size)}
                       aria-pressed={size === s.size}
-                      className={`h-10 w-10 border text-xs transition-colors ${
+                      className={`h-11 w-11 border text-xs transition-colors ${
                         size === s.size
                           ? 'border-pearl bg-pearl/10 text-pearl'
                           : soldOut
