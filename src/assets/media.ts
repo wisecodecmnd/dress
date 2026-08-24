@@ -27,11 +27,11 @@ export const media = {
  * silently pair a frame with the wrong kicker.
  */
 export const chapterFrames = {
-  'The Fit': '/assets/images/story/story-01-the-fit.jpg',
-  'The Fabric': '/assets/images/story/story-02-the-fabric.jpg',
-  'The Craft': '/assets/images/story/story-03-the-craft.jpg',
-  'The Details': '/assets/images/story/story-04-the-details.jpg',
-  'The Signature': '/assets/images/story/story-05-the-signature.jpg',
+  'The Fit': '/assets/images/story/the-fit.jpeg',
+  'The Fabric': '/assets/images/story/the-fabric.jpeg',
+  'The Craft': '/assets/images/story/the-craft.jpeg',
+  'The Details': '/assets/images/story/the-details.jpg',
+  'The Signature': '/assets/images/story/the-signature.jpeg',
 } as const;
 
 export type ChapterKicker = keyof typeof chapterFrames;

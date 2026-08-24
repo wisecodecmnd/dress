@@ -12,15 +12,15 @@ const chapters = [
     kicker: 'The Fit',
     frame: chapterFrames['The Fit'],
     title: 'Sculpted\nby wear',
-    body: 'Every pair is patterned from 47 body measurements. We engineer the fade lines before the first wash, so your denim ages with intention, not accident.',
+    body: 'Denimiq is where the structure of denim meets the fluidity of the human form. Every silhouette is thoughtfully engineered to move, settle and evolve with the wearer, creating a fit that becomes more personal with time. Our approach goes beyond conventional denim—we reinterpret familiar forms through sculptural tailoring, Indian silhouettes and contemporary proportions, making every piece feel distinctly Denimiq.',
     align: 'left',
   },
   {
     index: '02',
     kicker: 'The Fabric',
     frame: chapterFrames['The Fabric'],
-    title: 'Woven\nin Japan',
-    body: '14oz selvedge from Kojima, shuttle-woven on vintage Toyoda looms. The irregular weave creates a surface that catches light like water.',
+    title: 'Woven\nin India',
+    body: 'Exceptional denim begins with exceptional cloth. Our fabrics are thoughtfully woven in India, drawing from a rich textile heritage built on generations of weaving, craftsmanship and material knowledge. Denimiq brings that heritage into a modern canvas—transforming denim from a casual essential into something tactile, expressive and culturally rooted, with textures and washes designed to become more beautiful with every wear.',
     align: 'right',
   },
   {
@@ -28,7 +28,7 @@ const chapters = [
     kicker: 'The Craft',
     frame: chapterFrames['The Craft'],
     title: 'One\nartisan',
-    body: 'Each garment is cut, sewn, and finished by a single maker. Their signature is stitched inside — a promise that one person stood behind every seam.',
+    body: 'Every Denimiq piece carries the human touch behind its creation. Inspired by India tradition of artisanal making, we bring together precision tailoring, considered construction and contemporary denim techniques, allowing each garment to retain a sense of individuality. From the first cut to the final stitch, the craft is intentional—because a truly distinctive garment should feel made, not manufactured.',
     align: 'left',
   },
   {
@@ -36,7 +36,7 @@ const chapters = [
     kicker: 'The Details',
     frame: chapterFrames['The Details'],
     title: 'Hidden\nintentions',
-    body: 'Copper rivets at stress points. Chain-stitched hems. Hidden pocket reinforcements. Details you discover over years, not seconds.',
+    body: 'The identity of Denimiq lives in the details. Traditional Indian design language is subtly woven into denim through considered motifs, borders, stitch techniques, handcrafted elements, architectural panels and unexpected finishing. Nothing exists merely for decoration; every detail has a purpose, creating pieces where heritage is discovered gradually and modernity meets tradition in an unexpected way.',
     align: 'right',
   },
   {
@@ -44,7 +44,7 @@ const chapters = [
     kicker: 'The Signature',
     frame: chapterFrames['The Signature'],
     title: 'The Denimque\nCrest',
-    body: 'Embossed leather patch, hand-stamped with the edition number. A mark of belonging for those who know what quality feels like.',
+    body: 'The Denimiq Crest represents our philosophy: heritage, individuality and the redefinition of denim. It is a signature of pieces created for those who see clothing as more than something to wear—a mark of belonging to a new expression of Indian design. Denimiq does not simply put tradition onto denim; we create a new language where Indian cultural richness and the attitude of contemporary denim exist as one.',
     align: 'center',
   },
 ] as const;
@@ -146,7 +146,7 @@ export default function StorySection() {
         <div
           key={chapter.index}
           className="story-frame absolute inset-0 bg-cover bg-center opacity-100 will-change-transform"
-          style={{ backgroundImage: `url(${chapter.frame})` }}
+          style={{ backgroundImage: `url("${chapter.frame}")` }}
           aria-hidden="true"
         />
       ))}
